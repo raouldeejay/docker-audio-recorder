@@ -22,11 +22,31 @@ RATE = 44100
 recording_state = {
     'is_recording': False,
     'current_file': None,
-    'current_filename': None
+    'current_filename': None,
+    'selected_device': None
 }
 
-def record_audio(filename, duration=None):
-    """Record audio to file"""
+def get_audio_devices():
+    """Get list of available audio input devices"""
+    p = pyaudio.PyAudio()
+    devices = []
+    
+    for i in range(p.get_device_count()):
+        device_info = p.get_device_info_by_index(i)
+        # Only include devices that have input channels
+        if device_info['maxInputChannels'] > 0:
+            devices.append({
+                'index': i,
+                'name': device_info['name'],
+                'channels': device_info['maxInputChannels'],
+                'sampleRate': device_info['defaultSampleRate']
+            })
+    
+    p.terminate()
+    return devices
+
+def record_audio(filename, device_index=None, duration=None):
+    """Record audio to file from specified device"""
     filepath = RECORDINGS_DIR / filename
     
     try:
@@ -37,6 +57,7 @@ def record_audio(filename, duration=None):
             channels=CHANNELS,
             rate=RATE,
             input=True,
+            input_device_index=device_index,
             frames_per_buffer=CHUNK
         )
         
@@ -73,20 +94,34 @@ def index():
     """Serve the web interface"""
     return render_template('index.html')
 
+@app.route('/api/devices', methods=['GET'])
+def get_devices():
+    """Get list of available audio input devices"""
+    try:
+        devices = get_audio_devices()
+        return jsonify({'success': True, 'devices': devices})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/start', methods=['POST'])
 def start_recording():
     """Start recording audio"""
     data = request.json
     filename = data.get('filename', f"recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav")
+    device_index = data.get('device_index')
+    
+    if device_index is None:
+        return jsonify({'success': False, 'error': 'No audio device selected'}), 400
     
     if recording_state['is_recording']:
         return jsonify({'success': False, 'error': 'Already recording'}), 400
     
     recording_state['is_recording'] = True
     recording_state['current_filename'] = filename
+    recording_state['selected_device'] = device_index
     
     # Start recording in a separate thread
-    thread = threading.Thread(target=record_audio, args=(filename,))
+    thread = threading.Thread(target=record_audio, args=(filename, device_index))
     thread.daemon = True
     thread.start()
     

@@ -5,8 +5,8 @@ services:
     build:
       context: git@github.com:raouldeejay/docker-audio-recorder.git#main
       dockerfile: Dockerfile
-      args:
-        BUILDKIT_INLINE_CACHE: 1
+      ssh:
+        - default
     container_name: docker-audio-recorder
     ports:
       - "5000:5000"

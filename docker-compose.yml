@@ -3,10 +3,8 @@ version: '3.8'
 services:
   audio-recorder:
     build:
-      context: git@github.com:raouldeejay/docker-audio-recorder.git#main
+      context: https://github.com/raouldeejay/docker-audio-recorder.git
       dockerfile: Dockerfile
-      ssh:
-        - default
     container_name: docker-audio-recorder
     ports:
       - "5000:5000"

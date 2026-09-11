@@ -3,7 +3,7 @@ version: '3.8'
 services:
   audio-recorder:
     build:
-      context: https://github.com/raouldeejay/docker-audio-recorder.git#main
+      context: git@github.com:raouldeejay/docker-audio-recorder.git#main
       dockerfile: Dockerfile
     container_name: docker-audio-recorder
     ports:

@@ -6,18 +6,20 @@ services:
       context: git@github.com:raouldeejay/docker-audio-recorder.git#main
       dockerfile: Dockerfile
       ssh:
-        - default
+        - default=${SSH_AUTH_SOCK}
     container_name: docker-audio-recorder
     ports:
       - "5000:5000"
     volumes:
       - ./recordings:/app/recordings
       - /dev/snd:/dev/snd  # Audio device access
+      - ${SSH_AUTH_SOCK}:/ssh-agent  # SSH agent socket
     devices:
       - /dev/snd:/dev/snd  # Grant access to audio interface
     environment:
       - FLASK_ENV=production
       - AUDIO_DEVICE=default  # Can be changed to specific device
+      - SSH_AUTH_SOCK=/ssh-agent  # Pass SSH socket to container
     privileged: false
     cap_add:
       - SYS_ADMIN  # Required for audio access on some systems

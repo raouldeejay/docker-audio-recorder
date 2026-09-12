@@ -55,7 +55,8 @@
             font-weight: 500;
         }
 
-        input[type="text"] {
+        input[type="text"],
+        select {
             width: 100%;
             padding: 10px;
             border: 2px solid #ddd;
@@ -64,10 +65,40 @@
             transition: border-color 0.3s;
         }
 
-        input[type="text"]:focus {
+        input[type="text"]:focus,
+        select:focus {
             outline: none;
             border-color: #667eea;
             background: #f0f4ff;
+        }
+
+        select {
+            background: white;
+            cursor: pointer;
+        }
+
+        .device-status {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-indicator.no-device {
+            background: #dc3545;
+        }
+
+        .status-indicator.device-selected {
+            background: #28a745;
         }
 
         .button-group {
@@ -238,12 +269,23 @@
 
         <div class="recorder-section">
             <div class="form-group">
+                <label for="audioDevice">Audio Input Device</label>
+                <select id="audioDevice">
+                    <option value="">-- Select an audio device --</option>
+                </select>
+                <div class="device-status">
+                    <span class="status-indicator no-device" id="deviceIndicator"></span>
+                    <span id="deviceStatusText">No device selected</span>
+                </div>
+            </div>
+
+            <div class="form-group">
                 <label for="filename">Filename (without extension)</label>
                 <input type="text" id="filename" placeholder="my_recording">
             </div>
 
             <div class="button-group">
-                <button class="btn-start" id="startBtn" onclick="startRecording()">Start Recording</button>
+                <button class="btn-start" id="startBtn" onclick="startRecording()" disabled>Start Recording</button>
                 <button class="btn-stop" id="stopBtn" onclick="stopRecording()" disabled>Stop Recording</button>
             </div>
 
@@ -266,6 +308,9 @@
         const stopBtn = document.getElementById('stopBtn');
         const filenameInput = document.getElementById('filename');
         const messageDiv = document.getElementById('message');
+        const audioDeviceSelect = document.getElementById('audioDevice');
+        const deviceIndicator = document.getElementById('deviceIndicator');
+        const deviceStatusText = document.getElementById('deviceStatusText');
 
         function showMessage(text, type) {
             messageDiv.textContent = text;
@@ -276,16 +321,58 @@
             }, 5000);
         }
 
+        async function loadAudioDevices() {
+            try {
+                const response = await fetch('/api/devices');
+                const data = await response.json();
+                
+                if (data.success && data.devices.length > 0) {
+                    audioDeviceSelect.innerHTML = '<option value="">-- Select an audio device --</option>';
+                    data.devices.forEach(device => {
+                        const option = document.createElement('option');
+                        option.value = device.index;
+                        option.textContent = `${device.name} (${device.channels} ch, ${device.sampleRate} Hz)`;
+                        audioDeviceSelect.appendChild(option);
+                    });
+                } else {
+                    audioDeviceSelect.innerHTML = '<option value="">No audio devices found</option>';
+                    showMessage('No audio input devices found on this system', 'error');
+                }
+            } catch (error) {
+                console.error('Error loading devices:', error);
+                showMessage('Error loading audio devices', 'error');
+                audioDeviceSelect.innerHTML = '<option value="">Error loading devices</option>';
+            }
+        }
+
+        function updateDeviceStatus() {
+            const selectedValue = audioDeviceSelect.value;
+            if (selectedValue) {
+                deviceIndicator.className = 'status-indicator device-selected';
+                const selectedOption = audioDeviceSelect.options[audioDeviceSelect.selectedIndex];
+                deviceStatusText.textContent = `Selected: ${selectedOption.text}`;
+                startBtn.disabled = false;
+            } else {
+                deviceIndicator.className = 'status-indicator no-device';
+                deviceStatusText.textContent = 'No device selected';
+                startBtn.disabled = true;
+            }
+        }
+
+        audioDeviceSelect.addEventListener('change', updateDeviceStatus);
+
         async function getStatus() {
             try {
                 const response = await fetch('/api/status');
                 const data = await response.json();
                 
-                startBtn.disabled = data.is_recording;
-                stopBtn.disabled = !data.is_recording;
-                filenameInput.disabled = data.is_recording;
+                const isRecording = data.is_recording;
+                startBtn.disabled = isRecording || !audioDeviceSelect.value;
+                stopBtn.disabled = !isRecording;
+                filenameInput.disabled = isRecording;
+                audioDeviceSelect.disabled = isRecording;
 
-                if (data.is_recording) {
+                if (isRecording) {
                     statusBadge.textContent = '● Recording...';
                     statusBadge.className = 'status-badge status-recording';
                 } else {
@@ -298,6 +385,13 @@
         }
 
         async function startRecording() {
+            const deviceIndex = audioDeviceSelect.value;
+            
+            if (!deviceIndex) {
+                showMessage('Please select an audio device', 'error');
+                return;
+            }
+
             let filename = filenameInput.value.trim();
             if (!filename) {
                 filename = `recording_${new Date().toISOString().replace(/[:.]/g, '-')}`;
@@ -308,7 +402,7 @@
                 const response = await fetch('/api/start', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({filename})
+                    body: JSON.stringify({filename, device_index: parseInt(deviceIndex)})
                 });
                 const data = await response.json();
                 
@@ -392,6 +486,8 @@
         }
 
         // Initialize
+        loadAudioDevices();
+        updateDeviceStatus();
         getStatus();
         loadRecordings();
         setInterval(getStatus, 1000);

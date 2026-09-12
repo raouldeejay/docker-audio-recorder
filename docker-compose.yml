@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   audio-recorder:
@@ -8,14 +7,13 @@ services:
     container_name: docker-audio-recorder
     ports:
       - "5000:5000"
+    devices:
+      - /dev/snd:/dev/snd
     volumes:
       - ./recordings:/app/recordings
-      - /dev/snd:/dev/snd  # Audio device access
-    devices:
-      - /dev/snd:/dev/snd  # Grant access to audio interface
+      - /etc/asound.conf:/etc/asound.conf:ro
+      - /usr/share/alsa:/usr/share/alsa:ro
+      - /proc/asound:/proc/asound:ro
     environment:
       - FLASK_ENV=production
-      - AUDIO_DEVICE=default  # Can be changed to specific device
     privileged: false
-    cap_add:
-      - SYS_ADMIN  # Required for audio access on some systems

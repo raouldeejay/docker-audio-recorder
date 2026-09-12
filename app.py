@@ -67,7 +67,13 @@ def probe_device_capabilities(device_index):
                 input_device_index=device_index
             )
             stream.close()
-            supported_formats.append(fmt)
+            
+            supported_formats.append({
+                "format": fmt,
+                "name": FORMAT_MAP[fmt]["name"],
+                "bits": FORMAT_MAP[fmt]["bits"]
+            })
+
         except Exception:
             pass
 

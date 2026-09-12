@@ -13,7 +13,6 @@ services:
       - ./recordings:/app/recordings
       - /etc/asound.conf:/etc/asound.conf:ro
       - /usr/share/alsa:/usr/share/alsa:ro
-      - /proc/asound:/proc/asound:ro
     environment:
       - FLASK_ENV=production
     privileged: false

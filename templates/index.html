@@ -28,6 +28,8 @@
             padding: 40px;
             max-width: 600px;
             width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
         }
 
         h1 {
@@ -44,8 +46,29 @@
             border-radius: 8px;
         }
 
+        .settings-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .settings-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 12px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
         .form-group {
             margin-bottom: 15px;
+        }
+
+        .form-group:last-child {
+            margin-bottom: 0;
         }
 
         label {
@@ -53,6 +76,7 @@
             margin-bottom: 5px;
             color: #555;
             font-weight: 500;
+            font-size: 14px;
         }
 
         input[type="text"],
@@ -75,6 +99,12 @@
         select {
             background: white;
             cursor: pointer;
+        }
+
+        select:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
+            opacity: 0.6;
         }
 
         .device-status {
@@ -151,6 +181,7 @@
             background: white;
             border-radius: 6px;
             margin-top: 15px;
+            border: 1px solid #e0e0e0;
         }
 
         .status-badge {
@@ -190,7 +221,7 @@
         }
 
         .recordings-list {
-            max-height: 400px;
+            max-height: 300px;
             overflow-y: auto;
         }
 
@@ -203,6 +234,7 @@
             border-radius: 6px;
             margin-bottom: 8px;
             border-left: 4px solid #667eea;
+            font-size: 13px;
         }
 
         .recording-info {
@@ -216,7 +248,7 @@
         }
 
         .recording-meta {
-            font-size: 12px;
+            font-size: 11px;
             color: #777;
         }
 
@@ -238,7 +270,7 @@
         .empty-state {
             text-align: center;
             color: #999;
-            padding: 30px 20px;
+            padding: 20px;
         }
 
         .message {
@@ -246,6 +278,7 @@
             border-radius: 6px;
             margin-bottom: 15px;
             display: none;
+            font-size: 14px;
         }
 
         .message.success {
@@ -259,6 +292,18 @@
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
+
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        @media (max-width: 500px) {
+            .settings-grid {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -268,6 +313,7 @@
         <div id="message" class="message"></div>
 
         <div class="recorder-section">
+            <!-- Device Selection -->
             <div class="form-group">
                 <label for="audioDevice">Audio Input Device</label>
                 <select id="audioDevice">
@@ -279,21 +325,44 @@
                 </div>
             </div>
 
+            <!-- Audio Settings -->
+            <div class="settings-section" id="audioSettingsSection" style="display: none;">
+                <div class="settings-title">Audio Settings</div>
+                <div class="settings-grid">
+                    <div class="form-group">
+                        <label for="sampleRate">Sample Rate (Hz)</label>
+                        <select id="sampleRate">
+                            <option value="">Loading...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="bitDepth">Bit Depth</label>
+                        <select id="bitDepth">
+                            <option value="">Loading...</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filename -->
             <div class="form-group">
                 <label for="filename">Filename (without extension)</label>
                 <input type="text" id="filename" placeholder="my_recording">
             </div>
 
+            <!-- Control Buttons -->
             <div class="button-group">
                 <button class="btn-start" id="startBtn" onclick="startRecording()" disabled>Start Recording</button>
                 <button class="btn-stop" id="stopBtn" onclick="stopRecording()" disabled>Stop Recording</button>
             </div>
 
+            <!-- Status -->
             <div class="status">
                 <span class="status-badge status-idle" id="statusBadge">● Idle</span>
             </div>
         </div>
 
+        <!-- Recordings List -->
         <div class="recordings-section">
             <h2>Recordings</h2>
             <div class="recordings-list" id="recordingsList">
@@ -311,6 +380,11 @@
         const audioDeviceSelect = document.getElementById('audioDevice');
         const deviceIndicator = document.getElementById('deviceIndicator');
         const deviceStatusText = document.getElementById('deviceStatusText');
+        const sampleRateSelect = document.getElementById('sampleRate');
+        const bitDepthSelect = document.getElementById('bitDepth');
+        const audioSettingsSection = document.getElementById('audioSettingsSection');
+
+        let allDevices = [];
 
         function showMessage(text, type) {
             messageDiv.textContent = text;
@@ -327,11 +401,12 @@
                 const data = await response.json();
                 
                 if (data.success && data.devices.length > 0) {
+                    allDevices = data.devices;
                     audioDeviceSelect.innerHTML = '<option value="">-- Select an audio device --</option>';
                     data.devices.forEach(device => {
                         const option = document.createElement('option');
                         option.value = device.index;
-                        option.textContent = `${device.name} (${device.channels} ch, ${device.sampleRate} Hz)`;
+                        option.textContent = `${device.name} (${device.channels} ch, ${device.defaultSampleRate} Hz)`;
                         audioDeviceSelect.appendChild(option);
                     });
                 } else {
@@ -345,21 +420,48 @@
             }
         }
 
-        function updateDeviceStatus() {
-            const selectedValue = audioDeviceSelect.value;
-            if (selectedValue) {
+        function updateAudioSettings() {
+            const selectedDeviceIndex = parseInt(audioDeviceSelect.value);
+            const selectedDevice = allDevices.find(d => d.index === selectedDeviceIndex);
+
+            if (selectedDevice) {
+                audioSettingsSection.style.display = 'block';
+
+                // Populate sample rates
+                sampleRateSelect.innerHTML = '';
+                selectedDevice.supportedSampleRates.forEach(rate => {
+                    const option = document.createElement('option');
+                    option.value = rate;
+                    option.textContent = `${rate} Hz`;
+                    if (rate === selectedDevice.defaultSampleRate) {
+                        option.selected = true;
+                    }
+                    sampleRateSelect.appendChild(option);
+                });
+
+                // Populate bit depths
+                bitDepthSelect.innerHTML = '';
+                selectedDevice.supportedFormats.forEach(fmt => {
+                    const option = document.createElement('option');
+                    option.value = fmt.format;
+                    option.textContent = `${fmt.name} (${fmt.bits}-bit)`;
+                    bitDepthSelect.appendChild(option);
+                });
+
+                // Update device status
                 deviceIndicator.className = 'status-indicator device-selected';
                 const selectedOption = audioDeviceSelect.options[audioDeviceSelect.selectedIndex];
                 deviceStatusText.textContent = `Selected: ${selectedOption.text}`;
                 startBtn.disabled = false;
             } else {
+                audioSettingsSection.style.display = 'none';
                 deviceIndicator.className = 'status-indicator no-device';
                 deviceStatusText.textContent = 'No device selected';
                 startBtn.disabled = true;
             }
         }
 
-        audioDeviceSelect.addEventListener('change', updateDeviceStatus);
+        audioDeviceSelect.addEventListener('change', updateAudioSettings);
 
         async function getStatus() {
             try {
@@ -371,6 +473,8 @@
                 stopBtn.disabled = !isRecording;
                 filenameInput.disabled = isRecording;
                 audioDeviceSelect.disabled = isRecording;
+                sampleRateSelect.disabled = isRecording;
+                bitDepthSelect.disabled = isRecording;
 
                 if (isRecording) {
                     statusBadge.textContent = '● Recording...';
@@ -386,6 +490,8 @@
 
         async function startRecording() {
             const deviceIndex = audioDeviceSelect.value;
+            const sampleRate = parseInt(sampleRateSelect.value);
+            const format = parseInt(bitDepthSelect.value);
             
             if (!deviceIndex) {
                 showMessage('Please select an audio device', 'error');
@@ -402,7 +508,13 @@
                 const response = await fetch('/api/start', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({filename, device_index: parseInt(deviceIndex)})
+                    body: JSON.stringify({
+                        filename,
+                        device_index: parseInt(deviceIndex),
+                        sample_rate: sampleRate,
+                        channels: 2,
+                        format: format
+                    })
                 });
                 const data = await response.json();
                 
@@ -487,7 +599,6 @@
 
         // Initialize
         loadAudioDevices();
-        updateDeviceStatus();
         getStatus();
         loadRecordings();
         setInterval(getStatus, 1000);

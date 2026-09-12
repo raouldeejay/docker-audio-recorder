@@ -12,18 +12,24 @@ app = Flask(__name__)
 RECORDINGS_DIR = Path('/app/recordings')
 RECORDINGS_DIR.mkdir(exist_ok=True)
 
-# Audio format mappings
+# Audio format mappings - prioritize commonly supported formats
 FORMAT_MAP = {
-    pyaudio.paFloat32: {'name': 'Float32', 'bits': 32},
-    pyaudio.paInt32: {'name': 'Int32', 'bits': 32},
-    pyaudio.paInt24: {'name': 'Int24', 'bits': 24},
     pyaudio.paInt16: {'name': 'Int16', 'bits': 16},
-    pyaudio.paInt8: {'name': 'Int8', 'bits': 8},
+    pyaudio.paInt24: {'name': 'Int24', 'bits': 24},
+    pyaudio.paInt32: {'name': 'Int32', 'bits': 32},
+    pyaudio.paFloat32: {'name': 'Float32', 'bits': 32},
 }
 
-# Common sample rates to test
-COMMON_SAMPLE_RATES = [8000, 16000, 22050, 44100, 48000, 96000, 192000]
-COMMON_FORMATS = [pyaudio.paFloat32, pyaudio.paInt32, pyaudio.paInt16]
+# Common sample rates to test (most to least common)
+COMMON_SAMPLE_RATES = [44100, 48000, 22050, 16000, 96000, 192000, 8000]
+
+# Audio formats to test - prioritize 16-bit and 24-bit
+COMMON_FORMATS = [
+    pyaudio.paInt16,    # 16-bit (most common)
+    pyaudio.paInt24,    # 24-bit (pro audio)
+    pyaudio.paInt32,    # 32-bit
+    pyaudio.paFloat32,  # Float32
+]
 
 # Global recording state
 recording_state = {
@@ -33,70 +39,125 @@ recording_state = {
     'selected_device': None,
     'sample_rate': 44100,
     'channels': 2,
-    'format': pyaudio.paFloat32
+    'format': pyaudio.paInt16  # Default to 16-bit
 }
 
-def get_supported_sample_rates(device_index):
-    """Get list of supported sample rates for a device"""
+def get_supported_sample_rates(device_index, is_input=True):
+    """Get list of supported sample rates for a device (input or output)"""
     p = pyaudio.PyAudio()
     supported_rates = []
     
     try:
         device_info = p.get_device_info_by_index(device_index)
-        channels = int(device_info['maxInputChannels'])
+        channels = int(device_info['maxInputChannels']) if is_input else int(device_info['maxOutputChannels'])
         
+        if channels == 0:
+            return []
+        
+        # Try common sample rates
         for rate in COMMON_SAMPLE_RATES:
             try:
-                # Try to open a stream with this sample rate
-                stream = p.open(
-                    format=pyaudio.paFloat32,
-                    channels=channels,
-                    rate=rate,
-                    input=True,
-                    input_device_index=device_index,
-                    frames_per_buffer=1024
-                )
+                # Try with Int16 first as it's most commonly supported
+                if is_input:
+                    stream = p.open(
+                        format=pyaudio.paInt16,
+                        channels=channels,
+                        rate=rate,
+                        input=True,
+                        input_device_index=device_index,
+                        frames_per_buffer=1024
+                    )
+                else:
+                    stream = p.open(
+                        format=pyaudio.paInt16,
+                        channels=channels,
+                        rate=rate,
+                        output=True,
+                        output_device_index=device_index,
+                        frames_per_buffer=1024
+                    )
                 stream.close()
                 supported_rates.append(rate)
-            except:
+            except Exception as e:
                 pass
     finally:
         p.terminate()
     
-    return supported_rates if supported_rates else [44100]
+    # Return sorted rates or default
+    return sorted(supported_rates) if supported_rates else []
 
-def get_supported_formats(device_index, sample_rate):
-    """Get list of supported formats for a device"""
+def get_supported_formats(device_index, sample_rate, is_input=True):
+    """Get list of supported formats for a device (input or output)"""
     p = pyaudio.PyAudio()
     supported_formats = []
     
     try:
         device_info = p.get_device_info_by_index(device_index)
-        channels = int(device_info['maxInputChannels'])
+        channels = int(device_info['maxInputChannels']) if is_input else int(device_info['maxOutputChannels'])
         
+        if channels == 0:
+            return []
+        
+        # Try each format
         for fmt in COMMON_FORMATS:
             try:
-                stream = p.open(
-                    format=fmt,
-                    channels=channels,
-                    rate=sample_rate,
-                    input=True,
-                    input_device_index=device_index,
-                    frames_per_buffer=1024
-                )
+                if is_input:
+                    stream = p.open(
+                        format=fmt,
+                        channels=channels,
+                        rate=sample_rate,
+                        input=True,
+                        input_device_index=device_index,
+                        frames_per_buffer=1024
+                    )
+                else:
+                    stream = p.open(
+                        format=fmt,
+                        channels=channels,
+                        rate=sample_rate,
+                        output=True,
+                        output_device_index=device_index,
+                        frames_per_buffer=1024
+                    )
                 stream.close()
+                
                 format_info = FORMAT_MAP.get(fmt, {'name': 'Unknown', 'bits': 0})
                 supported_formats.append({
                     'format': fmt,
                     'name': format_info['name'],
                     'bits': format_info['bits']
                 })
-            except:
+            except Exception as e:
+                # Format not supported, skip it
                 pass
     finally:
         p.terminate()
     
-    return supported_formats if supported_formats else [{'format': pyaudio.paFloat32, 'name': 'Float32', 'bits': 32}]
+    return supported_formats
+
+def merge_capabilities(input_rates, output_rates, input_formats, output_formats):
+    """Merge input and output capabilities - return common/recommended settings"""
+    # Get intersection of sample rates
+    common_rates = sorted(set(input_rates) & set(output_rates)) if output_rates else input_rates
+    
+    # Get intersection of formats
+    input_format_set = {f['format'] for f in input_formats}
+    output_format_set = {f['format'] for f in output_formats} if output_formats else input_format_set
+    common_format_codes = input_format_set & output_format_set
+    
+    # Map back to format info
+    common_formats = [f for f in input_formats if f['format'] in common_format_codes]
+    if not common_formats:
+        common_formats = input_formats  # Fallback to input-only if no common formats
+    
+    return {
+        'input_rates': input_rates,
+        'output_rates': output_rates,
+        'common_rates': common_rates,
+        'input_formats': input_formats,
+        'output_formats': output_formats,
+        'common_formats': common_formats
+    }
 
 def get_audio_devices():
     """Get list of available audio input devices with their capabilities"""
@@ -104,20 +165,45 @@ def get_audio_devices():
     devices = []
     
     for i in range(p.get_device_count()):
-        device_info = p.get_device_info_by_index(i)
-        # Only include devices that have input channels
-        if device_info['maxInputChannels'] > 0:
-            sample_rates = get_supported_sample_rates(i)
-            formats = get_supported_formats(i, sample_rates[0] if sample_rates else 44100)
-            
-            devices.append({
-                'index': i,
-                'name': device_info['name'],
-                'channels': device_info['maxInputChannels'],
-                'defaultSampleRate': int(device_info['defaultSampleRate']),
-                'supportedSampleRates': sample_rates,
-                'supportedFormats': formats
-            })
+        try:
+            device_info = p.get_device_info_by_index(i)
+            # Only include devices that have input channels
+            if device_info['maxInputChannels'] > 0:
+                # Get input capabilities
+                input_sample_rates = get_supported_sample_rates(i, is_input=True)
+                if not input_sample_rates:
+                    continue  # Skip device if can't get input rates
+                
+                default_rate = int(device_info['defaultSampleRate'])
+                probe_rate = default_rate if default_rate in input_sample_rates else input_sample_rates[0]
+                
+                input_formats = get_supported_formats(i, probe_rate, is_input=True)
+                
+                # Get output capabilities (if device supports output)
+                output_sample_rates = []
+                output_formats = []
+                if device_info['maxOutputChannels'] > 0:
+                    output_sample_rates = get_supported_sample_rates(i, is_input=False)
+                    if output_sample_rates:
+                        output_probe_rate = default_rate if default_rate in output_sample_rates else output_sample_rates[0]
+                        output_formats = get_supported_formats(i, output_probe_rate, is_input=False)
+                
+                # Merge capabilities
+                capabilities = merge_capabilities(input_sample_rates, output_sample_rates, input_formats, output_formats)
+                
+                devices.append({
+                    'index': i,
+                    'name': device_info['name'],
+                    'channels': {
+                        'input': int(device_info['maxInputChannels']),
+                        'output': int(device_info['maxOutputChannels'])
+                    },
+                    'defaultSampleRate': default_rate,
+                    'capabilities': capabilities
+                })
+        except Exception as e:
+            print(f"Error probing device {i}: {e}")
+            pass
     
     p.terminate()
     return devices
@@ -166,7 +252,8 @@ def record_audio(filename, device_index=None, sample_rate=None, channels=None, a
             wf.writeframes(b''.join(frames))
         
         p.terminate()
-        print(f"Recording saved: {filepath}")
+        format_name = FORMAT_MAP.get(audio_format, {}).get('name', 'Unknown')
+        print(f"Recording saved: {filepath} ({sample_rate}Hz, {format_name}, {channels}ch)")
         return True
         
     except Exception as e:

@@ -198,10 +198,16 @@ def api_start():
     caps = probe_device_capabilities(device_index)
 
     # Requested settings
+    # Normalize incoming values
     requested_rate = data.get('sample_rate')
+    if requested_rate is not None:
+        requested_rate = int(requested_rate)
+
     requested_format = data.get('format')
     if isinstance(requested_format, dict):
         requested_format = requested_format.get("format")
+    if requested_format is not None:
+        requested_format = int(requested_format)
 
     # Enforce valid sample rate
     if requested_rate not in caps['sampleRates']:

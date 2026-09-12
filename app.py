@@ -200,6 +200,8 @@ def api_start():
     # Requested settings
     requested_rate = data.get('sample_rate')
     requested_format = data.get('format')
+    if isinstance(requested_format, dict):
+        requested_format = requested_format.get("format")
 
     # Enforce valid sample rate
     if requested_rate not in caps['sampleRates']:

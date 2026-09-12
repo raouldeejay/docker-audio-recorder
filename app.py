@@ -144,20 +144,12 @@ def get_audio_devices():
     p.terminate()
     return devices
 
-def record_audio(filename, device_index=None, sample_rate=None, channels=None, audio_format=None):
-    """Record audio to file from specified device"""
+def record_audio(filename, device_index, sample_rate, channels, audio_format):
     filepath = RECORDINGS_DIR / filename
-    
-    if sample_rate is None:
-        sample_rate = recording_state['sample_rate']
-    if channels is None:
-        channels = recording_state['channels']
-    if audio_format is None:
-        audio_format = recording_state['format']
-    
+
     try:
         p = pyaudio.PyAudio()
-        
+
         stream = p.open(
             format=audio_format,
             channels=channels,
@@ -166,34 +158,39 @@ def record_audio(filename, device_index=None, sample_rate=None, channels=None, a
             input_device_index=device_index,
             frames_per_buffer=1024
         )
-        
+
+        stream.start_stream()
+        if not stream.is_active():
+            recording_state['last_error'] = "Audio stream failed to start"
+            return False
+
         frames = []
-        
-        while recording_state['is_recording']:
+
+        while True:
+            if not recording_state['is_recording']:
+                break
+
             try:
                 data = stream.read(1024, exception_on_overflow=False)
                 frames.append(data)
             except Exception as e:
-                print(f"Error reading audio: {e}")
+                recording_state['last_error'] = str(e)
                 break
-        
+
         stream.stop_stream()
         stream.close()
-        
-        # Write WAV file
+        p.terminate()
+
         with wave.open(str(filepath), 'wb') as wf:
             wf.setnchannels(channels)
             wf.setsampwidth(p.get_sample_size(audio_format))
             wf.setframerate(sample_rate)
             wf.writeframes(b''.join(frames))
-        
-        p.terminate()
-        format_name = FORMAT_MAP.get(audio_format, {}).get('name', 'Unknown')
-        print(f"Recording saved: {filepath} ({sample_rate}Hz, {format_name}, {channels}ch)")
+
         return True
-        
+
     except Exception as e:
-        print(f"Recording error: {e}")
+        recording_state['last_error'] = str(e)
         return False
 
 @app.route('/')

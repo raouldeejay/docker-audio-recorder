@@ -1,608 +1,106 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Docker Audio Recorder</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-
-        .container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            padding: 40px;
-            max-width: 600px;
-            width: 100%;
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
-        h1 {
-            text-align: center;
-            color: #333;
-            margin-bottom: 30px;
-            font-size: 28px;
-        }
-
-        .recorder-section {
-            margin-bottom: 30px;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 8px;
-        }
-
-        .settings-section {
-            margin-bottom: 20px;
-            padding: 15px;
-            background: #fff;
-            border-radius: 8px;
-            border: 1px solid #e0e0e0;
-        }
-
-        .settings-title {
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 12px;
-            font-size: 14px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .form-group {
-            margin-bottom: 15px;
-        }
-
-        .form-group:last-child {
-            margin-bottom: 0;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 5px;
-            color: #555;
-            font-weight: 500;
-            font-size: 14px;
-        }
-
-        input[type="text"],
-        select {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #ddd;
-            border-radius: 6px;
-            font-size: 14px;
-            transition: border-color 0.3s;
-        }
-
-        input[type="text"]:focus,
-        select:focus {
-            outline: none;
-            border-color: #667eea;
-            background: #f0f4ff;
-        }
-
-        select {
-            background: white;
-            cursor: pointer;
-        }
-
-        select:disabled {
-            background: #f5f5f5;
-            cursor: not-allowed;
-            opacity: 0.6;
-        }
-
-        .device-status {
-            font-size: 12px;
-            color: #666;
-            margin-top: 5px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .status-indicator {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-
-        .status-indicator.no-device {
-            background: #dc3545;
-        }
-
-        .status-indicator.device-selected {
-            background: #28a745;
-        }
-
-        .button-group {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
-        }
-
-        button {
-            flex: 1;
-            padding: 12px 20px;
-            border: none;
-            border-radius: 6px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .btn-start {
-            background: #28a745;
-            color: white;
-        }
-
-        .btn-start:hover:not(:disabled) {
-            background: #218838;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
-        }
-
-        .btn-stop {
-            background: #dc3545;
-            color: white;
-        }
-
-        .btn-stop:hover:not(:disabled) {
-            background: #c82333;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(220, 53, 69, 0.3);
-        }
-
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .status {
-            text-align: center;
-            padding: 15px;
-            background: white;
-            border-radius: 6px;
-            margin-top: 15px;
-            border: 1px solid #e0e0e0;
-        }
-
-        .status-badge {
-            display: inline-block;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            font-size: 14px;
-        }
-
-        .status-recording {
-            background: #ffd700;
-            color: #333;
-            animation: pulse 1s infinite;
-        }
-
-        .status-idle {
-            background: #28a745;
-            color: white;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-
-        .recordings-section {
-            margin-top: 30px;
-        }
-
-        .recordings-section h2 {
-            color: #333;
-            font-size: 20px;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #667eea;
-        }
-
-        .recordings-list {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .recording-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px;
-            background: #f8f9fa;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            border-left: 4px solid #667eea;
-            font-size: 13px;
-        }
-
-        .recording-info {
-            flex: 1;
-        }
-
-        .recording-name {
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 4px;
-        }
-
-        .recording-meta {
-            font-size: 11px;
-            color: #777;
-        }
-
-        .btn-delete {
-            background: #dc3545;
-            color: white;
-            padding: 6px 12px;
-            font-size: 12px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-
-        .btn-delete:hover {
-            background: #c82333;
-        }
-
-        .empty-state {
-            text-align: center;
-            color: #999;
-            padding: 20px;
-        }
-
-        .message {
-            padding: 12px;
-            border-radius: 6px;
-            margin-bottom: 15px;
-            display: none;
-            font-size: 14px;
-        }
-
-        .message.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-
-        .message.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-
-        .settings-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-
-        @media (max-width: 500px) {
-            .settings-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🎤 Docker Audio Recorder</h1>
-        
-        <div id="message" class="message"></div>
 
-        <div class="recorder-section">
-            <!-- Device Selection -->
-            <div class="form-group">
-                <label for="audioDevice">Audio Input Device</label>
-                <select id="audioDevice">
-                    <option value="">-- Select an audio device --</option>
-                </select>
-                <div class="device-status">
-                    <span class="status-indicator no-device" id="deviceIndicator"></span>
-                    <span id="deviceStatusText">No device selected</span>
-                </div>
-            </div>
+<h1>Docker Audio Recorder</h1>
 
-            <!-- Audio Settings -->
-            <div class="settings-section" id="audioSettingsSection" style="display: none;">
-                <div class="settings-title">Audio Settings</div>
-                <div class="settings-grid">
-                    <div class="form-group">
-                        <label for="sampleRate">Sample Rate (Hz)</label>
-                        <select id="sampleRate">
-                            <option value="">Loading...</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="bitDepth">Bit Depth</label>
-                        <select id="bitDepth">
-                            <option value="">Loading...</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
+<h2>Detected capture cards</h2>
+<ul>
+    {% for c in cards %}
+        <li>
+            Card {{ c.card }}, device {{ c.device }} — {{ c.name }}
+            {% if c.card == selected_card %}
+                (selected)
+            {% endif %}
+        </li>
+    {% endfor %}
+</ul>
 
-            <!-- Filename -->
-            <div class="form-group">
-                <label for="filename">Filename (without extension)</label>
-                <input type="text" id="filename" placeholder="my_recording">
-            </div>
+<p>
+    Current capture device:
+    {% if selected_card is not none %}
+        card {{ selected_card }}, device {{ selected_device }} — {{ selected_name }}
+    {% else %}
+        none
+    {% endif %}
+</p>
 
-            <!-- Control Buttons -->
-            <div class="button-group">
-                <button class="btn-start" id="startBtn" onclick="startRecording()" disabled>Start Recording</button>
-                <button class="btn-stop" id="stopBtn" onclick="stopRecording()" disabled>Stop Recording</button>
-            </div>
+<hr>
 
-            <!-- Status -->
-            <div class="status">
-                <span class="status-badge status-idle" id="statusBadge">● Idle</span>
-            </div>
-        </div>
+<h2>Input source (Line / SPDIF)</h2>
 
-        <!-- Recordings List -->
-        <div class="recordings-section">
-            <h2>Recordings</h2>
-            <div class="recordings-list" id="recordingsList">
-                <div class="empty-state">Loading recordings...</div>
-            </div>
-        </div>
-    </div>
+{% if selector_present %}
+    <p>Current source: <span id="currentSource">{{ input_source }}</span></p>
 
-    <script>
-        const statusBadge = document.getElementById('statusBadge');
-        const startBtn = document.getElementById('startBtn');
-        const stopBtn = document.getElementById('stopBtn');
-        const filenameInput = document.getElementById('filename');
-        const messageDiv = document.getElementById('message');
-        const audioDeviceSelect = document.getElementById('audioDevice');
-        const deviceIndicator = document.getElementById('deviceIndicator');
-        const deviceStatusText = document.getElementById('deviceStatusText');
-        const sampleRateSelect = document.getElementById('sampleRate');
-        const bitDepthSelect = document.getElementById('bitDepth');
-        const audioSettingsSection = document.getElementById('audioSettingsSection');
+    <select id="inputSource">
+        <option value="Line">Line (Analog)</option>
+        <option value="IEC958 In">SPDIF (IEC958)</option>
+    </select>
+    <button onclick="setInputSource()">Apply</button>
+{% else %}
+    <p>This card does not expose a Line/SPDIF selector.</p>
+{% endif %}
 
-        let allDevices = [];
+<hr>
 
-        function showMessage(text, type) {
-            messageDiv.textContent = text;
-            messageDiv.className = `message ${type}`;
-            messageDiv.style.display = 'block';
-            setTimeout(() => {
-                messageDiv.style.display = 'none';
-            }, 5000);
-        }
+<h2>Recording</h2>
 
-        async function loadAudioDevices() {
-            try {
-                const response = await fetch('/api/devices');
-                const data = await response.json();
-                
-                if (data.success && data.devices.length > 0) {
-                    allDevices = data.devices;
-                    audioDeviceSelect.innerHTML = '<option value="">-- Select an audio device --</option>';
-                    data.devices.forEach(device => {
-                        const option = document.createElement('option');
-                        option.value = device.index;
-                        option.textContent = `${device.name} (${device.channels} ch, ${device.defaultSampleRate} Hz)`;
-                        audioDeviceSelect.appendChild(option);
-                    });
-                } else {
-                    audioDeviceSelect.innerHTML = '<option value="">No audio devices found</option>';
-                    showMessage('No audio input devices found on this system', 'error');
-                }
-            } catch (error) {
-                console.error('Error loading devices:', error);
-                showMessage('Error loading audio devices', 'error');
-                audioDeviceSelect.innerHTML = '<option value="">Error loading devices</option>';
+<button onclick="startRecording()">Start</button>
+<button onclick="stopRecording()">Stop</button>
+
+<script>
+function refreshInputSource() {
+    fetch("/api/input")
+        .then(r => r.json())
+        .then(data => {
+            if (data.supported) {
+                document.getElementById("currentSource").innerText = data.source;
             }
+        });
+}
+
+function setInputSource() {
+    const source = document.getElementById("inputSource").value;
+
+    fetch("/api/input", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({source})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === "ok") {
+            refreshInputSource();
+            alert("Input set to: " + data.source);
+        } else {
+            alert("Error: " + (data.error || "unknown"));
         }
+    });
+}
 
-        function updateAudioSettings() {
-            const selectedDeviceIndex = parseInt(audioDeviceSelect.value);
-            const selectedDevice = allDevices.find(d => d.index === selectedDeviceIndex);
-
-            if (selectedDevice) {
-                audioSettingsSection.style.display = 'block';
-
-                // Populate sample rates
-                sampleRateSelect.innerHTML = '';
-                selectedDevice.supportedSampleRates.forEach(rate => {
-                    const option = document.createElement('option');
-                    option.value = rate;
-                    option.textContent = `${rate} Hz`;
-                    if (rate === selectedDevice.defaultSampleRate) {
-                        option.selected = true;
-                    }
-                    sampleRateSelect.appendChild(option);
-                });
-
-                // Populate bit depths
-                bitDepthSelect.innerHTML = '';
-                selectedDevice.supportedFormats.forEach(fmt => {
-                    const option = document.createElement('option');
-                    option.value = fmt.format;
-                    option.textContent = `${fmt.name} (${fmt.bits}-bit)`;
-                    bitDepthSelect.appendChild(option);
-                });
-
-                // Update device status
-                deviceIndicator.className = 'status-indicator device-selected';
-                const selectedOption = audioDeviceSelect.options[audioDeviceSelect.selectedIndex];
-                deviceStatusText.textContent = `Selected: ${selectedOption.text}`;
-                startBtn.disabled = false;
+function startRecording() {
+    fetch("/api/start", {method: "POST"})
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                alert("Error: " + data.error);
             } else {
-                audioSettingsSection.style.display = 'none';
-                deviceIndicator.className = 'status-indicator no-device';
-                deviceStatusText.textContent = 'No device selected';
-                startBtn.disabled = true;
+                alert("Recording started");
             }
-        }
+        });
+}
 
-        audioDeviceSelect.addEventListener('change', updateAudioSettings);
+function stopRecording() {
+    fetch("/api/stop", {method: "POST"})
+        .then(r => r.json())
+        .then(data => {
+            alert("Recording stopped");
+        });
+}
+</script>
 
-        async function getStatus() {
-            try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
-                
-                const isRecording = data.is_recording;
-                startBtn.disabled = isRecording || !audioDeviceSelect.value;
-                stopBtn.disabled = !isRecording;
-                filenameInput.disabled = isRecording;
-                audioDeviceSelect.disabled = isRecording;
-                sampleRateSelect.disabled = isRecording;
-                bitDepthSelect.disabled = isRecording;
-
-                if (isRecording) {
-                    statusBadge.textContent = '● Recording...';
-                    statusBadge.className = 'status-badge status-recording';
-                } else {
-                    statusBadge.textContent = '● Idle';
-                    statusBadge.className = 'status-badge status-idle';
-                }
-            } catch (error) {
-                console.error('Status error:', error);
-            }
-        }
-
-        async function startRecording() {
-            const deviceIndex = audioDeviceSelect.value;
-            const sampleRate = parseInt(sampleRateSelect.value);
-            const format = parseInt(bitDepthSelect.value);
-            
-            if (!deviceIndex) {
-                showMessage('Please select an audio device', 'error');
-                return;
-            }
-
-            let filename = filenameInput.value.trim();
-            if (!filename) {
-                filename = `recording_${new Date().toISOString().replace(/[:.]/g, '-')}`;
-            }
-            filename += '.wav';
-
-            try {
-                const response = await fetch('/api/start', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        filename,
-                        device_index: parseInt(deviceIndex),
-                        sample_rate: sampleRate,
-                        channels: 2,
-                        format: format
-                    })
-                });
-                const data = await response.json();
-                
-                if (data.success) {
-                    showMessage(data.message, 'success');
-                    getStatus();
-                } else {
-                    showMessage(data.error, 'error');
-                }
-            } catch (error) {
-                showMessage('Error starting recording', 'error');
-                console.error(error);
-            }
-        }
-
-        async function stopRecording() {
-            try {
-                const response = await fetch('/api/stop', {method: 'POST'});
-                const data = await response.json();
-                
-                if (data.success) {
-                    showMessage(data.message, 'success');
-                    getStatus();
-                    loadRecordings();
-                } else {
-                    showMessage(data.error, 'error');
-                }
-            } catch (error) {
-                showMessage('Error stopping recording', 'error');
-                console.error(error);
-            }
-        }
-
-        async function loadRecordings() {
-            try {
-                const response = await fetch('/api/recordings');
-                const data = await response.json();
-                const list = document.getElementById('recordingsList');
-
-                if (data.recordings.length === 0) {
-                    list.innerHTML = '<div class="empty-state">No recordings yet</div>';
-                    return;
-                }
-
-                list.innerHTML = data.recordings.map(rec => {
-                    const size = (rec.size / 1024 / 1024).toFixed(2);
-                    const date = new Date(rec.created).toLocaleString();
-                    return `
-                        <div class="recording-item">
-                            <div class="recording-info">
-                                <div class="recording-name">${rec.filename}</div>
-                                <div class="recording-meta">${date} • ${size} MB</div>
-                            </div>
-                            <button class="btn-delete" onclick="deleteRecording('${rec.filename}')">Delete</button>
-                        </div>
-                    `;
-                }).join('');
-            } catch (error) {
-                console.error('Error loading recordings:', error);
-                document.getElementById('recordingsList').innerHTML = '<div class="empty-state">Error loading recordings</div>';
-            }
-        }
-
-        async function deleteRecording(filename) {
-            if (!confirm(`Delete ${filename}?`)) return;
-
-            try {
-                const response = await fetch(`/api/delete/${filename}`, {method: 'DELETE'});
-                const data = await response.json();
-                
-                if (data.success) {
-                    showMessage(data.message, 'success');
-                    loadRecordings();
-                } else {
-                    showMessage(data.error, 'error');
-                }
-            } catch (error) {
-                showMessage('Error deleting recording', 'error');
-                console.error(error);
-            }
-        }
-
-        // Initialize
-        loadAudioDevices();
-        getStatus();
-        loadRecordings();
-        setInterval(getStatus, 1000);
-        setInterval(loadRecordings, 5000);
-    </script>
 </body>
 </html>

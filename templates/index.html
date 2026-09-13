@@ -2,105 +2,151 @@
 <html>
 <head>
     <title>Docker Audio Recorder</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 40px auto;
+            background: #fff;
+            padding: 25px 35px;
+            border-radius: 10px;
+            box-shadow: 0 0 12px rgba(0,0,0,0.15);
+        }
+
+        h1, h2 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        ul {
+            background: #fafafa;
+            padding: 15px;
+            border-radius: 8px;
+            list-style: none;
+            border: 1px solid #ddd;
+        }
+
+        ul li {
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        ul li:last-child {
+            border-bottom: none;
+        }
+
+        .section {
+            margin-top: 30px;
+        }
+
+        button {
+            background: #0078d7;
+            color: white;
+            padding: 10px 18px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 15px;
+            margin-right: 10px;
+        }
+
+        button:hover {
+            background: #005fa3;
+        }
+
+        select {
+            padding: 8px;
+            font-size: 15px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            margin-right: 10px;
+        }
+
+        .info-box {
+            background: #fafafa;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            margin-bottom: 20px;
+        }
+
+        .current-source {
+            font-weight: bold;
+            color: #0078d7;
+        }
+    </style>
 </head>
+
 <body>
+<div class="container">
 
-<h1>Docker Audio Recorder</h1>
+    <h1>Docker Audio Recorder</h1>
 
-<h2>Detected capture cards</h2>
-<ul>
-    {% for c in cards %}
-        <li>
-            Card {{ c.card }}, device {{ c.device }} — {{ c.name }}
-            {% if c.card == selected_card %}
-                (selected)
-            {% endif %}
-        </li>
-    {% endfor %}
-</ul>
+    <div class="section">
+        <h2>Detected Capture Cards</h2>
 
-<p>
-    Current capture device:
-    {% if selected_card is not none %}
-        card {{ selected_card }}, device {{ selected_device }} — {{ selected_name }}
-    {% else %}
-        none
-    {% endif %}
-</p>
+        <ul>
+            {% for c in cards %}
+                <li>
+                    Card {{ c.card }}, device {{ c.device }} — {{ c.name }}
+                    {% if c.card == selected_card %}
+                        <strong>(selected)</strong>
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
 
-<hr>
+        <div class="info-box">
+            <p>
+                Current capture device:
+                {% if selected_card is not none %}
+                    <strong>card {{ selected_card }}, device {{ selected_device }} — {{ selected_name }}</strong>
+                {% else %}
+                    <strong>none</strong>
+                {% endif %}
+            </p>
+        </div>
+    </div>
 
-<h2>Input source (Line / SPDIF)</h2>
+    <div class="section">
+        <h2>Input Source (Line / SPDIF)</h2>
 
-{% if selector_present %}
-    <p>Current source: <span id="currentSource">{{ input_source }}</span></p>
+        {% if selector_present %}
+            <p>Current source:
+                <span id="currentSource" class="current-source">{{ input_source }}</span>
+            </p>
 
-    <select id="inputSource">
-        <option value="Line">Line (Analog)</option>
-        <option value="IEC958 In">SPDIF (IEC958)</option>
-    </select>
-    <button onclick="setInputSource()">Apply</button>
-{% else %}
-    <p>This card does not expose a Line/SPDIF selector.</p>
-{% endif %}
+            <select id="inputSource">
+                <option value="Line">Line (Analog)</option>
+                <option value="IEC958 In">SPDIF (IEC958)</option>
+            </select>
 
-<hr>
+            <button onclick="setInputSource()">Apply</button>
 
-<h2>Recording</h2>
+        {% else %}
+            <p>This card does not expose a Line/SPDIF selector.</p>
+        {% endif %}
+    </div>
 
-<button onclick="startRecording()">Start</button>
-<button onclick="stopRecording()">Stop</button>
+    <div class="section">
+        <h2>Recording</h2>
+
+        <button onclick="startRecording()">Start</button>
+        <button onclick="stopRecording()">Stop</button>
+    </div>
+
+</div>
 
 <script>
 function refreshInputSource() {
     fetch("/api/input")
         .then(r => r.json())
         .then(data => {
-            if (data.supported) {
-                document.getElementById("currentSource").innerText = data.source;
-            }
-        });
-}
-
-function setInputSource() {
-    const source = document.getElementById("inputSource").value;
-
-    fetch("/api/input", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({source})
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.status === "ok") {
-            refreshInputSource();
-            alert("Input set to: " + data.source);
-        } else {
-            alert("Error: " + (data.error || "unknown"));
-        }
-    });
-}
-
-function startRecording() {
-    fetch("/api/start", {method: "POST"})
-        .then(r => r.json())
-        .then(data => {
-            if (data.error) {
-                alert("Error: " + data.error);
-            } else {
-                alert("Recording started");
-            }
-        });
-}
-
-function stopRecording() {
-    fetch("/api/stop", {method: "POST"})
-        .then(r => r.json())
-        .then(data => {
-            alert("Recording stopped");
-        });
-}
-</script>
-
-</body>
-</html>
+            if (data.support

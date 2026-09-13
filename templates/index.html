@@ -61,12 +61,13 @@
             background: #005fa3;
         }
 
-        select {
+        select, input[type="text"] {
             padding: 8px;
             font-size: 15px;
             border-radius: 6px;
             border: 1px solid #ccc;
             margin-right: 10px;
+            margin-top: 5px;
         }
 
         .info-box {
@@ -81,6 +82,15 @@
             font-weight: bold;
             color: #0078d7;
         }
+
+        .status {
+            font-weight: bold;
+            color: #d9534f;
+        }
+
+        .status.recording {
+            color: #5cb85c;
+        }
     </style>
 </head>
 
@@ -89,6 +99,13 @@
 
     <h1>Docker Audio Recorder</h1>
 
+    <!-- STATUS -->
+    <div class="section">
+        <h2>Status</h2>
+        <p>Status: <span id="recordingStatus" class="status">Idle</span></p>
+    </div>
+
+    <!-- CARD LIST -->
     <div class="section">
         <h2>Detected Capture Cards</h2>
 
@@ -115,6 +132,7 @@
         </div>
     </div>
 
+    <!-- SPDIF / LINE SELECTOR -->
     <div class="section">
         <h2>Input Source (Line / SPDIF)</h2>
 
@@ -135,6 +153,32 @@
         {% endif %}
     </div>
 
+    <!-- RECORDING SETTINGS -->
+    <div class="section">
+        <h2>Recording Settings</h2>
+
+        <label>Filename:</label><br>
+        <input id="filename" type="text" placeholder="Leave empty for auto filename">
+
+        <br><br>
+
+        <label>Sample Rate:</label><br>
+        <select id="samplerate">
+            <option value="44100">44.1 kHz</option>
+            <option value="48000">48 kHz</option>
+            <option value="96000">96 kHz</option>
+        </select>
+
+        <br><br>
+
+        <label>Bit Depth:</label><br>
+        <select id="bitdepth">
+            <option value="16">16-bit</option>
+            <option value="24">24-bit</option>
+        </select>
+    </div>
+
+    <!-- RECORDING CONTROLS -->
     <div class="section">
         <h2>Recording</h2>
 
@@ -145,8 +189,88 @@
 </div>
 
 <script>
+function pollStatus() {
+    fetch("/api/status")
+        .then(r => r.json())
+        .then(data => {
+            const el = document.getElementById("recordingStatus");
+            if (data.recording) {
+                el.innerText = "Recording…";
+                el.classList.add("recording");
+            } else {
+                el.innerText = "Idle";
+                el.classList.remove("recording");
+            }
+        });
+}
+
 function refreshInputSource() {
     fetch("/api/input")
         .then(r => r.json())
         .then(data => {
-            if (data.support
+            if (data.supported) {
+                document.getElementById("currentSource").innerText = data.source;
+            }
+        });
+}
+
+function setInputSource() {
+    const source = document.getElementById("inputSource").value;
+
+    fetch("/api/input", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({source})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === "ok") {
+            refreshInputSource();
+            alert("Input set to: " + data.source);
+        } else {
+            alert("Error: " + (data.error || "unknown"));
+        }
+    });
+}
+
+function startRecording() {
+    const filename = document.getElementById("filename").value.trim();
+    const samplerate = document.getElementById("samplerate").value;
+    const bitdepth = document.getElementById("bitdepth").value;
+
+    fetch("/api/start", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            filename,
+            samplerate,
+            bitdepth
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            alert("Error: " + data.error);
+        } else {
+            alert("Recording started\nFilename: " + data.filename);
+        }
+    });
+}
+
+function stopRecording() {
+    fetch("/api/stop", {method: "POST"})
+        .then(r => r.json())
+        .then(data => {
+            alert("Recording stopped");
+        });
+}
+
+window.onload = function() {
+    refreshInputSource();
+    pollStatus();
+    setInterval(pollStatus, 1000);
+};
+</script>
+
+</body>
+</html>

@@ -9,6 +9,8 @@ services:
       - "5000:5000"
     devices:
       - /dev/snd:/dev/snd
+    device_cgroup_rules:
+      - 'c 189:* rmw'
     volumes:
       - ./recordings:/app/recordings
       - /etc/asound.conf:/etc/asound.conf:ro

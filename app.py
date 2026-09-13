@@ -115,7 +115,8 @@ def set_input_source(card, numid, source):
 
 def record_audio(filename, sample_rate=44100):
     global recording_active
-
+    
+    filepath = RECORDINGS_DIR / filename
     card, device, name = detect_capture_card()
     if card is None:
         print("ERROR: no capture card found")
@@ -135,7 +136,7 @@ def record_audio(filename, sample_rate=44100):
         frames_per_buffer=1024
     )
 
-    wf = wave.open(filename, "wb")
+    wf = wave.open(string(filepath), "wb")
     wf.setnchannels(2)
     wf.setsampwidth(audio.get_sample_size(pyaudio.paInt16))
     wf.setframerate(sample_rate)

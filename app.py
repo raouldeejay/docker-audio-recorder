@@ -136,7 +136,7 @@ def record_audio(filename, sample_rate=44100, bit_depth=pyaudio.paInt16):
         frames_per_buffer=1024
     )
 
-    wf = wave.open(string(filepath), "wb")
+    wf = wave.open(str(filepath), "wb")
     wf.setnchannels(2)
     wf.setsampwidth(audio.get_sample_size(pyaudio.paInt16))
     wf.setframerate(sample_rate)

@@ -54,6 +54,38 @@ def detect_capture_card():
     c = cards[0]
     return c["card"], c["device"], c["name"]
 
+def detect_channel_count(card, device):
+    """
+    Returns the maximum supported channel count for the ALSA device.
+    """
+    device_string = f"hw:{card},{device}"
+
+    try:
+        output = subprocess.check_output(
+            ["arecord", "-D", device_string, "--dump-hw-params"],
+            text=True,
+            stderr=subprocess.STDOUT
+        )
+    except subprocess.CalledProcessError as e:
+        print("Failed to query hw params:", e.output)
+        return 2  # safe fallback
+
+    for line in output.splitlines():
+        if "CHANNELS:" in line:
+            line = line.replace("CHANNELS:", "").strip()
+
+            # Case 1: single number, e.g. "2"
+            if line.isdigit():
+                return int(line)
+
+            # Case 2: range, e.g. "[1 2]"
+            m = re.search(r"\[(\d+)\s+(\d+)\]", line)
+            if m:
+                low = int(m.group(1))
+                high = int(m.group(2))
+                return high  # use max supported channels
+
+    return 2  # fallback
 
 # ------------------------------------------------------------
 # SPDIF / LINE SELECTOR (dynamic)
@@ -122,6 +154,8 @@ def start_arecord(filename, samplerate, bitdepth, card, device):
     else:
         raise ValueError("Unsupported bit depth")
 
+    channels = detect_channel_count(card, device)
+    
     device_string = f"hw:{card},{device}"
 
     cmd = [
@@ -129,6 +163,7 @@ def start_arecord(filename, samplerate, bitdepth, card, device):
         "-D", device_string,
         "-f", fmt,
         "-r", str(samplerate),
+        "-c", str(channels),
         filename
     ]
 

@@ -1,31 +1,20 @@
 import os
 import subprocess
 import re
-import wave
+import datetime
 import threading
 import time
 
 from flask import Flask, render_template, request, jsonify
-import pyaudio
-from pathlib import Path
 
 app = Flask(__name__)
 
-# Configuration
-RECORDINGS_DIR = Path('/app/recordings')
-RECORDINGS_DIR.mkdir(exist_ok=True)
+# Global recorder process
+arecord_process = None
 
-recording_thread = None
-recording_active = False
-
-import datetime
-
-def generate_filename():
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"recording_{ts}.wav"
 
 # ------------------------------------------------------------
-# ALSA / CARD DETECTION
+# ALSA CARD DETECTION
 # ------------------------------------------------------------
 
 def list_capture_cards():
@@ -59,9 +48,6 @@ def list_capture_cards():
 
 
 def detect_capture_card():
-    """
-    Pick the first input-capable card.
-    """
     cards = list_capture_cards()
     if not cards:
         return None, None, None
@@ -70,7 +56,7 @@ def detect_capture_card():
 
 
 # ------------------------------------------------------------
-# INPUT SELECTOR (LINE / SPDIF) – DYNAMIC
+# SPDIF / LINE SELECTOR (dynamic)
 # ------------------------------------------------------------
 
 def detect_input_selector(card):
@@ -110,47 +96,60 @@ def set_input_source(card, numid, source):
 
 
 # ------------------------------------------------------------
-# RECORDING
+# FILENAME GENERATION
 # ------------------------------------------------------------
 
-def record_audio(filename, sample_rate=44100, bit_depth=pyaudio.paInt16):
-    global recording_active
-    
-    filepath = RECORDINGS_DIR / filename
-    card, device, name = detect_capture_card()
-    if card is None:
-        print("ERROR: no capture card found")
-        return
+def generate_filename():
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"recording_{ts}.wav"
+
+
+# ------------------------------------------------------------
+# RECORDING USING ARECORD
+# ------------------------------------------------------------
+
+def start_arecord(filename, samplerate, bitdepth, card, device):
+    """
+    Launch arecord as a subprocess.
+    """
+    global arecord_process
+
+    # Map bit depth to ALSA format
+    if bitdepth == 16:
+        fmt = "S16_LE"
+    elif bitdepth == 24:
+        fmt = "S24_3LE"
+    else:
+        raise ValueError("Unsupported bit depth")
 
     device_string = f"hw:{card},{device}"
-    print(f"Recording from {device_string} ({name})")
 
-    audio = pyaudio.PyAudio()
+    cmd = [
+        "arecord",
+        "-D", device_string,
+        "-f", fmt,
+        "-r", str(samplerate),
+        filename
+    ]
 
-    stream = audio.open(
-        format=bit_depth,
-        channels=2,
-        rate=sample_rate,
-        input=True,
-        input_device_index=None,
-        frames_per_buffer=1024
-    )
+    print("Starting arecord:", " ".join(cmd))
+    arecord_process = subprocess.Popen(cmd)
 
-    wf = wave.open(str(filepath), "wb")
-    wf.setnchannels(2)
-    wf.setsampwidth(audio.get_sample_size(bit_depth))
-    wf.setframerate(sample_rate)
 
-    recording_active = True
+def stop_arecord():
+    """
+    Stop the arecord subprocess cleanly.
+    """
+    global arecord_process
 
-    while recording_active:
-        data = stream.read(1024, exception_on_overflow=False)
-        wf.writeframes(data)
+    if arecord_process is not None:
+        arecord_process.terminate()
+        try:
+            arecord_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            arecord_process.kill()
 
-    stream.stop_stream()
-    stream.close()
-    audio.terminate()
-    wf.close()
+        arecord_process = None
 
 
 # ------------------------------------------------------------
@@ -181,47 +180,39 @@ def index():
     )
 
 
-@app.route("/api/cards", methods=["GET"])
-def api_cards():
-    return jsonify(list_capture_cards())
+@app.route("/api/status")
+def api_status():
+    return jsonify({"recording": arecord_process is not None})
+
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
-    global recording_thread, recording_active
+    global arecord_process
 
-    if recording_active:
+    if arecord_process is not None:
         return jsonify({"error": "Already recording"}), 400
 
     data = request.json
 
-    filename = data.get("filename")
-    if not filename or filename.strip() == "":
+    filename = data.get("filename", "").strip()
+    if filename == "":
         filename = generate_filename()
 
     samplerate = int(data.get("samplerate", 44100))
     bitdepth = int(data.get("bitdepth", 16))
 
-    if bitdepth == 16:
-        fmt = pyaudio.paInt16
-    elif bitdepth == 24:
-        fmt = pyaudio.paInt24
-    else:
-        return jsonify({"error": "Unsupported bit depth"}), 400
+    card, device, name = detect_capture_card()
+    if card is None:
+        return jsonify({"error": "No capture card found"}), 400
 
-    recording_thread = threading.Thread(
-        target=record_audio,
-        args=(filename, samplerate, fmt)
-    )
-    recording_thread.start()
+    start_arecord(filename, samplerate, bitdepth, card, device)
 
     return jsonify({"status": "recording", "filename": filename})
 
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
-    global recording_active
-    recording_active = False
-    time.sleep(0.5)
+    stop_arecord()
     return jsonify({"status": "stopped"})
 
 

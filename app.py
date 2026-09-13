@@ -13,6 +13,11 @@ app = Flask(__name__)
 recording_thread = None
 recording_active = False
 
+import datetime
+
+def generate_filename():
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"recording_{ts}.wav"
 
 # ------------------------------------------------------------
 # ALSA / CARD DETECTION
@@ -174,7 +179,6 @@ def index():
 def api_cards():
     return jsonify(list_capture_cards())
 
-
 @app.route("/api/start", methods=["POST"])
 def api_start():
     global recording_thread, recording_active
@@ -182,11 +186,29 @@ def api_start():
     if recording_active:
         return jsonify({"error": "Already recording"}), 400
 
-    filename = "recording.wav"
-    recording_thread = threading.Thread(target=record_audio, args=(filename,))
+    data = request.json
+
+    filename = data.get("filename")
+    if not filename or filename.strip() == "":
+        filename = generate_filename()
+
+    samplerate = int(data.get("samplerate", 44100))
+    bitdepth = int(data.get("bitdepth", 16))
+
+    if bitdepth == 16:
+        fmt = pyaudio.paInt16
+    elif bitdepth == 24:
+        fmt = pyaudio.paInt24
+    else:
+        return jsonify({"error": "Unsupported bit depth"}), 400
+
+    recording_thread = threading.Thread(
+        target=record_audio,
+        args=(filename, samplerate, fmt)
+    )
     recording_thread.start()
 
-    return jsonify({"status": "recording"})
+    return jsonify({"status": "recording", "filename": filename})
 
 
 @app.route("/api/stop", methods=["POST"])

@@ -7,8 +7,13 @@ import time
 
 from flask import Flask, render_template, request, jsonify
 import pyaudio
+from pathlib import Path
 
 app = Flask(__name__)
+
+# Configuration
+RECORDINGS_DIR = Path('/app/recordings')
+RECORDINGS_DIR.mkdir(exist_ok=True)
 
 recording_thread = None
 recording_active = False

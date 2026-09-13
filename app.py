@@ -113,7 +113,7 @@ def set_input_source(card, numid, source):
 # RECORDING
 # ------------------------------------------------------------
 
-def record_audio(filename, sample_rate=44100):
+def record_audio(filename, sample_rate=44100, bit_depth=pyaudio.paInt16):
     global recording_active
     
     filepath = RECORDINGS_DIR / filename
@@ -128,7 +128,7 @@ def record_audio(filename, sample_rate=44100):
     audio = pyaudio.PyAudio()
 
     stream = audio.open(
-        format=pyaudio.paInt16,
+        format=bit_depth,
         channels=2,
         rate=sample_rate,
         input=True,

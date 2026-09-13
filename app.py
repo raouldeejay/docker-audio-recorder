@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 # Global recorder process
 arecord_process = None
-RECORDINGS_ROOT = "/app/recordings"
+RECORDINGS_ROOT = "/app/recordings/"
 
 # ------------------------------------------------------------
 # ALSA CARD DETECTION
@@ -145,7 +145,7 @@ def start_arecord(filename, samplerate, bitdepth, card, device):
     Launch arecord as a subprocess.
     """
     global arecord_process
-    filepath = RECORDINGS_ROOT / filename
+    filepath = RECORDINGS_ROOT + filename
     # Map bit depth to ALSA format
     if bitdepth == 16:
         fmt = "S16_LE"

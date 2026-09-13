@@ -145,7 +145,7 @@ def start_arecord(filename, samplerate, bitdepth, card, device):
     Launch arecord as a subprocess.
     """
     global arecord_process
-    filepath = RECORDINS_ROOT / filename
+    filepath = RECORDINGS_ROOT / filename
     # Map bit depth to ALSA format
     if bitdepth == 16:
         fmt = "S16_LE"

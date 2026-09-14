@@ -80,7 +80,7 @@ def detect_capture_card():
 # ------------------------------------------------------------
 def dump_hw_params(card, device):
     device_string = f"hw:{card},{device}"
-
+    print("device string", device_string)
     for attempt in range(5):
         try:
             output = subprocess.check_output(

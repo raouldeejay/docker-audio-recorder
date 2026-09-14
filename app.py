@@ -71,6 +71,7 @@ def detect_capture_card():
         selected_card = c["card"]
         selected_device = c["device"]
         selected_name = c["name"]
+        set_card()
         
     return selected_card, selected_device, selected_name
 

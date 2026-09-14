@@ -417,7 +417,8 @@ def api_caps():
         "channels": hwcaps["channels"],
         "name": hwcaps["name"],
         "card": hwcaps["card"],
-        "device": hwcaps["device"]
+        "device": hwcaps["device"],
+        "RAW": hwcaps["raw"]
     })
 
 @app.route("/api/cards")

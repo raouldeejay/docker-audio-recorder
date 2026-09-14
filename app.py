@@ -290,7 +290,6 @@ def set_card():
     global selected_card, selected_device, selected_name, hwcaps
     # Cache raw hw params ONCE
     raw = dump_hw_params(selected_card, selected_device)
-
     hwcaps["card"] = selected_card
     hwcaps["device"] = selected_device
     hwcaps["name"] = selected_name
@@ -300,6 +299,9 @@ def set_card():
     hwcaps["bitdepths"] = detect_bitdepths(selected_card, selected_device)
     hwcaps["samplerates"] = detect_samplerates(selected_card, selected_device)
     hwcaps["channels"] = detect_channel_count(selected_card, selected_device)
+
+
+    print("RAW:", repr(hwcaps["raw"])
 
 
 

@@ -23,8 +23,7 @@ hwcaps = {
     "raw": None,          # <-- raw hw params dump
     "bitdepths": None,
     "samplerates": None,
-    "channels": None,
-    "input_sources": None
+    "channels": None
 }
 
 # ------------------------------------------------------------
@@ -293,7 +292,6 @@ def set_card():
     hwcaps["bitdepths"] = detect_bitdepths(selected_card, selected_device)
     hwcaps["samplerates"] = detect_samplerates(selected_card, selected_device)
     hwcaps["channels"] = detect_channel_count(selected_card, selected_device)
-    hwcaps["input_sources"] = detect_input_selector(selected_card, selected_device)
 
 
 
@@ -406,7 +404,6 @@ def api_caps():
         "bitdepths": hwcaps["bitdepths"],
         "samplerates": hwcaps["samplerates"],
         "channels": hwcaps["channels"],
-        "input_sources": hwcaps["input_sources"],
         "name": hwcaps["name"],
         "card": hwcaps["card"],
         "device": hwcaps["device"]

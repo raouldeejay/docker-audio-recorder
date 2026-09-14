@@ -4,6 +4,7 @@ import re
 import datetime
 import threading
 import time
+import socket
 
 from flask import Flask, render_template, request, jsonify
 
@@ -25,6 +26,8 @@ hwcaps = {
     "samplerates": None,
     "channels": None
 }
+
+HOSTNAME = socket.gethostname()
 
 # ------------------------------------------------------------
 # ALSA CARD DETECTION
@@ -334,7 +337,8 @@ def index():
         selected_device=device,
         selected_name=name,
         input_source=input_source,
-        selector_present=(selector_numid is not None)
+        selector_present=(selector_numid is not None),
+        hostname=HOSTNAME
     )
 
 

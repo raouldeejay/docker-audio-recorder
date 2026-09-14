@@ -80,22 +80,22 @@ def detect_capture_card():
 # ------------------------------------------------------------
 def dump_hw_params(card, device):
     device_string = f"hw:{card},{device}"
-    print("device string", device_string)
-    for attempt in range(5):
-        try:
-            output = subprocess.check_output(
-                ["arecord", "-D", device_string, "--dump-hw-params"],
-                text=True,
-                stderr=subprocess.STDOUT
-            )
-            if output.strip():
-                return output
-        except subprocess.CalledProcessError as e:
-            print("Failed to query hw params:", e.output)
 
-        time.sleep(0.2)  # wait 200ms before retry
+    proc = subprocess.Popen(
+        ["arecord", "-D", device_string, "--dump-hw-params"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True
+    )
+
+    output, _ = proc.communicate()
+
+    # ALSA may exit with code 1 even though output is valid
+    if output.strip():
+        return output
 
     return ""
+
 
 def detect_channel_count(card, device):
     """

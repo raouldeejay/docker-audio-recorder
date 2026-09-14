@@ -86,6 +86,90 @@ def detect_channel_count(card, device):
                 return high  # use max supported channels
 
     return 2  # fallback
+    
+
+# ------------------------------------------------------------
+# HW PARAMS (CHANNELS / FORMAT / RATE)
+# ------------------------------------------------------------
+
+def dump_hw_params(card, device):
+    device_string = f"hw:{card},{device}"
+    try:
+        output = subprocess.check_output(
+            ["arecord", "-D", device_string, "--dump-hw-params"],
+            text=True,
+            stderr=subprocess.STDOUT
+        )
+        return output
+    except subprocess.CalledProcessError as e:
+        print("Failed to query hw params:", e.output)
+        return ""
+
+
+def detect_channel_count(card, device):
+    """
+    Returns the maximum supported channel count for the ALSA device.
+    """
+    output = dump_hw_params(card, device)
+    for line in output.splitlines():
+        if "CHANNELS:" in line:
+            line = line.replace("CHANNELS:", "").strip()
+
+            # Case 1: single number, e.g. "2"
+            if line.isdigit():
+                return int(line)
+
+            # Case 2: range, e.g. "[1 2]"
+            m = re.search(r"\[(\d+)\s+(\d+)\]", line)
+            if m:
+                low = int(m.group(1))
+                high = int(m.group(2))
+                return high  # use max supported channels
+
+    return 2  # fallback
+
+
+def detect_bitdepths(card, device):
+    """
+    Returns list of supported bit depths, e.g. [16, 24]
+    based on FORMAT line.
+    """
+    output = dump_hw_params(card, device)
+    for line in output.splitlines():
+        if "FORMAT:" in line:
+            formats = line.replace("FORMAT:", "").strip().split()
+            bitdepths = []
+            for fmt in formats:
+                if "S16" in fmt:
+                    bitdepths.append(16)
+                elif "S24" in fmt:
+                    bitdepths.append(24)
+            return bitdepths
+    return [16]
+
+
+def detect_samplerates(card, device):
+    """
+    Returns list of supported samplerates based on RATE line.
+    """
+    output = dump_hw_params(card, device)
+    for line in output.splitlines():
+        if "RATE:" in line:
+            line = line.replace("RATE:", "").strip()
+
+            # Case: "[8000 48000]"
+            m = re.search(r"\[(\d+)\s+(\d+)\]", line)
+            if m:
+                low = int(m.group(1))
+                high = int(m.group(2))
+                common = [8000, 16000, 22050, 32000, 44100, 48000, 96000]
+                return [r for r in common if low <= r <= high]
+
+            # Case: single number
+            if line.isdigit():
+                return [int(line)]
+
+    return [44100, 48000]
 
 # ------------------------------------------------------------
 # SPDIF / LINE SELECTOR (dynamic)

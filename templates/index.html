@@ -200,7 +200,16 @@
 </div>
 
 <script>
+let previousBitdepth = null;
+let previousSamplerate = null;
 
+document.getElementById("bitdepth").addEventListener("change", e => {
+    previousBitdepth = parseInt(e.target.value);
+});
+
+document.getElementById("samplerate").addEventListener("change", e => {
+    previousSamplerate = parseInt(e.target.value);
+});
 
 function pollStatus() {
     fetch("/api/status")
@@ -322,6 +331,23 @@ function loadCaps() {
                 opt.textContent = depth + "-bit";
                 bd.appendChild(opt);
             });
+            
+            // Determine default bitdepth
+            let defaultBitdepth = caps.bitdepths.includes(24)
+                ? 24
+                : caps.bitdepths[0];
+
+            // Determine default samplerate
+            let defaultSamplerate = caps.samplerates.includes(48000)
+                ? 48000
+                : caps.samplerates[0];
+
+            // Apply defaults ONLY if user has not selected before
+            const _bd = previousBitdepth ?? defaultBitdepth;
+            const _sr = previousSamplerate ?? defaultSamplerate;
+
+            br.value = _bd;
+            sr.value = _sr;
         });
 }
 

@@ -78,20 +78,24 @@ def detect_capture_card():
 # ------------------------------------------------------------
 # HW PARAMS (CHANNELS / FORMAT / RATE)
 # ------------------------------------------------------------
-
 def dump_hw_params(card, device):
     device_string = f"hw:{card},{device}"
-    try:
-        output = subprocess.check_output(
-            ["arecord", "-D", device_string, "--dump-hw-params"],
-            text=True,
-            stderr=subprocess.STDOUT
-        )
-        return output
-    except subprocess.CalledProcessError as e:
-        print("Failed to query hw params:", e.output)
-        return ""
 
+    for attempt in range(5):
+        try:
+            output = subprocess.check_output(
+                ["arecord", "-D", device_string, "--dump-hw-params"],
+                text=True,
+                stderr=subprocess.STDOUT
+            )
+            if output.strip():
+                return output
+        except subprocess.CalledProcessError as e:
+            print("Failed to query hw params:", e.output)
+
+        time.sleep(0.2)  # wait 200ms before retry
+
+    return ""
 
 def detect_channel_count(card, device):
     """

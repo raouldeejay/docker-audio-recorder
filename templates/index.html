@@ -98,6 +98,7 @@
 <div class="container">
 
     <h1>Docker Audio Recorder</h1>
+    <div class="hostname">Host: {{ hostname }}</div>
 
     <!-- STATUS -->
     <div class="section">
@@ -185,17 +186,22 @@
     <div class="section">
         <h2>Recording</h2>
 
-        <button onclick="startRecording()">Start</button>
-        <button onclick="stopRecording()">Stop</button>
+        <button id="startBtn" onclick="startRecording()">Start</button>
+        <button id="stopBtn" onclick="stopRecording()" disabled>Stop</button>
+
     </div>
 
 </div>
 
 <script>
+
+
 function pollStatus() {
     fetch("/api/status")
         .then(r => r.json())
         .then(data => {
+            document.getElementById("startBtn").disabled = data.recording;
+            document.getElementById("stopBtn").disabled = !data.recording;
             const el = document.getElementById("recordingStatus");
             if (data.recording) {
                 el.innerText = "Recording…";
@@ -265,16 +271,22 @@ function startRecording() {
     .then(data => {
         if (data.error) {
             alert("Error: " + data.error);
-        } else {
+        } else {    
+            document.getElementById("startBtn").disabled = true;
+            document.getElementById("stopBtn").disabled = false;
             alert("Recording started\nFilename: " + data.filename);
         }
     });
 }
 
 function stopRecording() {
+    
     fetch("/api/stop", {method: "POST"})
         .then(r => r.json())
         .then(data => {
+            
+            document.getElementById("startBtn").disabled = false;
+            document.getElementById("stopBtn").disabled = true;
             alert("Recording stopped");
         });
 }

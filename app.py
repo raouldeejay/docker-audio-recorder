@@ -16,6 +16,17 @@ selected_card = None
 selected_device = None
 selected_name = None
 
+hwcaps = {
+    "card": None,
+    "device": None,
+    "name": None,
+    "raw": None,          # <-- raw hw params dump
+    "bitdepths": None,
+    "samplerates": None,
+    "channels": None,
+    "input_sources": None
+}
+
 # ------------------------------------------------------------
 # ALSA CARD DETECTION
 # ------------------------------------------------------------
@@ -113,8 +124,9 @@ def detect_channel_count(card, device):
     """
     Returns the maximum supported channel count for the ALSA device.
     """
-    output = dump_hw_params(card, device)
-    for line in output.splitlines():
+    global hwcaps
+    # output = dump_hw_params(card, device)
+    for line in hwcaps.raw.splitlines():
         if "CHANNELS:" in line:
             line = line.replace("CHANNELS:", "").strip()
 
@@ -137,10 +149,11 @@ def detect_bitdepths(card, device):
     Combines FORMAT and SAMPLE_BITS, keeps entries unique.
     Ignores SUBFORMAT completely.
     """
-    output = dump_hw_params(card, device)
+    global hwcaps
+    # output = dump_hw_params(card, device)
     bitdepths = set()
 
-    for line in output.splitlines():
+    for line in hwcaps.raw.splitlines():
 
         # FORMAT: S16_LE S24_3LE S32_LE
         if "FORMAT:" in line:
@@ -181,8 +194,9 @@ def detect_samplerates(card, device):
     """
     Returns list of supported samplerates based on RATE line.
     """
-    output = dump_hw_params(card, device)
-    for line in output.splitlines():
+    global hwcaps
+    # output = dump_hw_params(card, device)
+    for line in hwcaps.raw.splitlines():
         if "RATE:" in line:
             line = line.replace("RATE:", "").strip()
 
@@ -400,19 +414,19 @@ def api_set_input():
 
 @app.route("/api/caps")
 def api_caps():
-    global selected_card, selected_device
+    global hwcaps
 
-    if selected_card is None:
+    if hwcaps["card"] is None:
         return jsonify({"error": "no card selected"}), 400
 
-    bitdepths = detect_bitdepths(selected_card, selected_device)
-    samplerates = detect_samplerates(selected_card, selected_device)
-    channels = detect_channel_count(selected_card, selected_device)
-
     return jsonify({
-        "bitdepths": bitdepths,
-        "samplerates": samplerates,
-        "channels": channels
+        "bitdepths": hwcaps["bitdepths"],
+        "samplerates": hwcaps["samplerates"],
+        "channels": hwcaps["channels"],
+        "input_sources": hwcaps["input_sources"],
+        "name": hwcaps["name"],
+        "card": hwcaps["card"],
+        "device": hwcaps["device"]
     })
 
 @app.route("/api/cards")
@@ -432,16 +446,30 @@ def api_cards():
 
 @app.route("/api/select_card", methods=["POST"])
 def api_select_card():
-    global selected_card, selected_device, selected_name
+    global selected_card, selected_device, selected_name, hwcaps
 
     data = request.json or {}
     selected_card = data.get("card")
     selected_device = data.get("device")
 
-    # Optional: store name
+    # Store name
     for c in list_capture_cards():
         if c["card"] == selected_card and c["device"] == selected_device:
             selected_name = c["name"]
+
+    # Cache raw hw params ONCE
+    raw = dump_hw_params(selected_card, selected_device)
+
+    hwcaps["card"] = selected_card
+    hwcaps["device"] = selected_device
+    hwcaps["name"] = selected_name
+    hwcaps["raw"] = raw
+
+    # Now parse from cached raw dump
+    hwcaps["bitdepths"] = detect_bitdepths(selected_card, selected_device)
+    hwcaps["samplerates"] = detect_samplerates(selected_card, selected_device)
+    hwcaps["channels"] = detect_channels(selected_card, selected_device)
+    hwcaps["input_sources"] = detect_input_sources(selected_card, selected_device)
 
     return jsonify({"status": "ok"})
 

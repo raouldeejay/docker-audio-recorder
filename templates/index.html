@@ -265,7 +265,36 @@ function stopRecording() {
         });
 }
 
+function loadCaps() {
+    fetch("/api/caps")
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) return;
+
+            // Populate samplerates
+            const sr = document.getElementById("samplerate");
+            sr.innerHTML = "";
+            data.samplerates.forEach(rate => {
+                const opt = document.createElement("option");
+                opt.value = rate;
+                opt.textContent = rate + " Hz";
+                sr.appendChild(opt);
+            });
+
+            // Populate bitdepths
+            const bd = document.getElementById("bitdepth");
+            bd.innerHTML = "";
+            data.bitdepths.forEach(depth => {
+                const opt = document.createElement("option");
+                opt.value = depth;
+                opt.textContent = depth + "-bit";
+                bd.appendChild(opt);
+            });
+        });
+}
+
 window.onload = function() {
+    loadCaps();
     refreshInputSource();
     pollStatus();
     setInterval(pollStatus, 1000);

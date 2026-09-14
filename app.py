@@ -285,6 +285,21 @@ def api_set_input():
     set_input_source(card, numid, source)
     return jsonify({"status": "ok", "source": source})
 
+@app.route("/api/caps", methods=["GET"])
+def api_caps():
+    card, device, name = detect_capture_card()
+    if card is None:
+        return jsonify({"error": "no capture card"}), 400
+
+    bitdepths = detect_bitdepths(card, device)
+    samplerates = detect_samplerates(card, device)
+    channels = detect_channel_count(card, device)
+
+    return jsonify({
+        "bitdepths": bitdepths,
+        "samplerates": samplerates,
+        "channels": channels
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

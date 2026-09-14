@@ -398,15 +398,16 @@ def api_set_input():
     set_input_source(card, numid, source)
     return jsonify({"status": "ok", "source": source})
 
-@app.route("/api/caps", methods=["GET"])
+@app.route("/api/caps")
 def api_caps():
-    card, device, name = detect_capture_card()
-    if card is None:
-        return jsonify({"error": "no capture card"}), 400
+    global selected_card, selected_device
 
-    bitdepths = detect_bitdepths(card, device)
-    samplerates = detect_samplerates(card, device)
-    channels = detect_channel_count(card, device)
+    if selected_card is None:
+        return jsonify({"error": "no card selected"}), 400
+
+    bitdepths = detect_bitdepths(selected_card, selected_device)
+    samplerates = detect_samplerates(selected_card, selected_device)
+    channels = detect_channel_count(selected_card, selected_device)
 
     return jsonify({
         "bitdepths": bitdepths,

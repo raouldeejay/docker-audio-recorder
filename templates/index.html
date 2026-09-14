@@ -143,10 +143,10 @@
     </div>
 
     <!-- SPDIF / LINE SELECTOR -->
+    {% if selector_present %}
     <div class="section">
         <h2>Input Source (Line / SPDIF)</h2>
 
-        {% if selector_present %}
             <p>Current source:
                 <span id="currentSource" class="current-source">{{ input_source }}</span>
             </p>
@@ -158,10 +158,8 @@
 
             <button onclick="setInputSource()">Apply</button>
 
-        {% else %}
-            <p>This card does not expose a Line/SPDIF selector.</p>
-        {% endif %}
     </div>
+    {% endif %}
 
     <!-- RECORDING SETTINGS -->
     <div class="section">

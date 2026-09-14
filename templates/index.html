@@ -119,6 +119,9 @@
                 </li>
             {% endfor %}
         </ul>
+        
+        <select id="cardSelect"></select>
+        <button onclick="setCard()">Select Card</button>
 
         <div class="info-box">
             <p>
@@ -233,6 +236,17 @@ function setInputSource() {
     });
 }
 
+function setCard() {
+    const card = parseInt(document.getElementById("cardSelect").value);
+    const device = 0; // or from card list
+
+    fetch("/api/select_card", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({card, device})
+    }).then(() => loadCaps());
+}
+
 function startRecording() {
     const filename = document.getElementById("filename").value.trim();
     const samplerate = document.getElementById("samplerate").value;
@@ -293,8 +307,32 @@ function loadCaps() {
         });
 }
 
+function populateCardDropdown(cards) {
+    const sel = document.getElementById("cardSelect");
+    sel.innerHTML = "";
+
+    cards.forEach(c => {
+        const opt = document.createElement("option");
+        opt.value = c.card;        // card number
+        opt.textContent = `${c.name} (card ${c.card}, device ${c.device})`;
+        opt.dataset.device = c.device;   // store device number
+        sel.appendChild(opt);
+    });
+}
+
 window.onload = function() {
-    loadCaps();
+    fetch("/api/cards")
+        .then(r => r.json())
+        .then(cards => {
+            if (cards.length === 1) {
+                // Backend already auto-selected the card
+                loadCaps();
+            } else {
+                // Populate dropdown and wait for user selection
+                populateCardDropdown(cards);
+            }
+        });
+
     refreshInputSource();
     pollStatus();
     setInterval(pollStatus, 1000);

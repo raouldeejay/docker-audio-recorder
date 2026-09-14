@@ -61,11 +61,18 @@ def list_capture_cards():
 
 
 def detect_capture_card():
-    cards = list_capture_cards()
-    if not cards:
-        return None, None, None
-    c = cards[0]
-    return c["card"], c["device"], c["name"]
+    global selected_card, selected_device, selected_name
+    if selected_card = None
+        #init
+        cards = list_capture_cards()
+        if not cards:
+            return None, None, None
+        c = cards[0]
+        selected_card = c["card"]
+        selected_device = c["device"]
+        selected_name = c["name"]
+        
+    return selected_card, selected_device, selected_name
 
 # ------------------------------------------------------------
 # HW PARAMS (CHANNELS / FORMAT / RATE)
@@ -171,8 +178,8 @@ def detect_samplerates(card, device):
                 low = int(m.group(1))
                 high = int(m.group(2))
                 common = [8000, 16000, 22050, 32000, 44100, 48000, 96000]
-                return [r for r in common if low <= r <= high]
-
+                return [r for r in common if low <= int(r) <= high]
+                
             # Case: single number
             if line.isdigit():
                 return [int(line)]
@@ -302,8 +309,9 @@ def set_card():
 @app.route("/")
 def index():
     cards = list_capture_cards()
+    # init to 1st or selected card
     card, device, name = detect_capture_card()
-
+    
     input_source = None
     selector_numid = None
 

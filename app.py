@@ -314,7 +314,21 @@ def stop_arecord():
         arecord_process = None
 
 def set_card():
-    
+    global selected_card, selected_device, selected_name, hwcaps
+    # Cache raw hw params ONCE
+    raw = dump_hw_params(selected_card, selected_device)
+
+    hwcaps["card"] = selected_card
+    hwcaps["device"] = selected_device
+    hwcaps["name"] = selected_name
+    hwcaps["raw"] = raw
+
+    # Now parse from cached raw dump
+    hwcaps["bitdepths"] = detect_bitdepths(selected_card, selected_device)
+    hwcaps["samplerates"] = detect_samplerates(selected_card, selected_device)
+    hwcaps["channels"] = detect_channels(selected_card, selected_device)
+    hwcaps["input_sources"] = detect_input_sources(selected_card, selected_device)
+
 
 
 # ------------------------------------------------------------
@@ -444,12 +458,13 @@ def api_cards():
         selected_card = c["card"]
         selected_device = c["device"]
         selected_name = c["name"]
+        set_card()
 
     return jsonify(cards)
 
 @app.route("/api/select_card", methods=["POST"])
 def api_select_card():
-    global selected_card, selected_device, selected_name, hwcaps
+    global selected_card, selected_device, selected_name
 
     data = request.json or {}
     selected_card = data.get("card")
@@ -460,19 +475,7 @@ def api_select_card():
         if c["card"] == selected_card and c["device"] == selected_device:
             selected_name = c["name"]
 
-    # Cache raw hw params ONCE
-    raw = dump_hw_params(selected_card, selected_device)
-
-    hwcaps["card"] = selected_card
-    hwcaps["device"] = selected_device
-    hwcaps["name"] = selected_name
-    hwcaps["raw"] = raw
-
-    # Now parse from cached raw dump
-    hwcaps["bitdepths"] = detect_bitdepths(selected_card, selected_device)
-    hwcaps["samplerates"] = detect_samplerates(selected_card, selected_device)
-    hwcaps["channels"] = detect_channels(selected_card, selected_device)
-    hwcaps["input_sources"] = detect_input_sources(selected_card, selected_device)
+    set_card()
 
     return jsonify({"status": "ok"})
 

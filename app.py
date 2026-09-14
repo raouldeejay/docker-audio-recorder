@@ -313,6 +313,9 @@ def stop_arecord():
 
         arecord_process = None
 
+def set_card():
+    
+
 
 # ------------------------------------------------------------
 # FLASK ROUTES

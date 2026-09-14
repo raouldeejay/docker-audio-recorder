@@ -12,6 +12,9 @@ app = Flask(__name__)
 # Global recorder process
 arecord_process = None
 RECORDINGS_ROOT = "/app/recordings/"
+selected_card = None
+selected_device = None
+selected_name = None
 
 # ------------------------------------------------------------
 # ALSA CARD DETECTION
@@ -410,6 +413,36 @@ def api_caps():
         "samplerates": samplerates,
         "channels": channels
     })
+
+@app.route("/api/cards")
+def api_cards():
+    global selected_card, selected_device, selected_name
+
+    cards = list_capture_cards()
+
+    # Auto-select if exactly one card is present
+    if len(cards) == 1:
+        c = cards[0]
+        selected_card = c["card"]
+        selected_device = c["device"]
+        selected_name = c["name"]
+
+    return jsonify(cards)
+
+@app.route("/api/select_card", methods=["POST"])
+def api_select_card():
+    global selected_card, selected_device, selected_name
+
+    data = request.json or {}
+    selected_card = data.get("card")
+    selected_device = data.get("device")
+
+    # Optional: store name
+    for c in list_capture_cards():
+        if c["card"] == selected_card and c["device"] == selected_device:
+            selected_name = c["name"]
+
+    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

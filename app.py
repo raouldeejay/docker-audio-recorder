@@ -62,7 +62,7 @@ def list_capture_cards():
 
 def detect_capture_card():
     global selected_card, selected_device, selected_name
-    if selected_card = None
+    if selected_card is None:
         #init
         cards = list_capture_cards()
         if not cards:

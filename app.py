@@ -301,7 +301,7 @@ def set_card():
     hwcaps["channels"] = detect_channel_count(selected_card, selected_device)
 
 
-    print("RAW:", repr(hwcaps["raw"])
+    print("RAW:", repr(hwcaps["raw"]))
 
 
 

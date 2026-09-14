@@ -72,19 +72,9 @@ def detect_channel_count(card, device):
     """
     Returns the maximum supported channel count for the ALSA device.
     """
-    device_string = f"hw:{card},{device}"
-
-    try:
-        output = subprocess.check_output(
-            ["arecord", "-D", device_string, "--dump-hw-params"],
-            text=True,
-            stderr=subprocess.STDOUT
-        )
-    except subprocess.CalledProcessError as e:
-        print("Failed to query hw params:", e.output)
-        return 2  # safe fallback
-
-    for line in output.splitlines():
+    global hwcaps
+    # output = dump_hw_params(card, device)
+    for line in hwcaps["raw"].splitlines():
         if "CHANNELS:" in line:
             line = line.replace("CHANNELS:", "").strip()
 
@@ -126,7 +116,7 @@ def detect_channel_count(card, device):
     """
     global hwcaps
     # output = dump_hw_params(card, device)
-    for line in hwcaps.raw.splitlines():
+    for line in hwcaps["raw"].splitlines():
         if "CHANNELS:" in line:
             line = line.replace("CHANNELS:", "").strip()
 
@@ -153,7 +143,7 @@ def detect_bitdepths(card, device):
     # output = dump_hw_params(card, device)
     bitdepths = set()
 
-    for line in hwcaps.raw.splitlines():
+    for line in hwcaps["raw"].splitlines():
 
         # FORMAT: S16_LE S24_3LE S32_LE
         if "FORMAT:" in line:
@@ -196,7 +186,7 @@ def detect_samplerates(card, device):
     """
     global hwcaps
     # output = dump_hw_params(card, device)
-    for line in hwcaps.raw.splitlines():
+    for line in hwcaps["raw"].splitlines():
         if "RATE:" in line:
             line = line.replace("RATE:", "").strip()
 

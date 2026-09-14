@@ -128,24 +128,50 @@ def detect_channel_count(card, device):
 
     return 2  # fallback
 
-
 def detect_bitdepths(card, device):
     """
-    Returns list of supported bit depths, e.g. [16, 24]
-    based on FORMAT line.
+    Returns list of supported bit depths, e.g. [16, 24].
+    Combines FORMAT and SAMPLE_BITS, keeps entries unique.
+    Ignores SUBFORMAT completely.
     """
     output = dump_hw_params(card, device)
+    bitdepths = set()
+
     for line in output.splitlines():
+
+        # FORMAT: S16_LE S24_3LE S32_LE
         if "FORMAT:" in line:
             formats = line.replace("FORMAT:", "").strip().split()
-            bitdepths = []
             for fmt in formats:
                 if "S16" in fmt:
-                    bitdepths.append(16)
+                    bitdepths.add(16)
                 elif "S24" in fmt:
-                    bitdepths.append(24)
-            return bitdepths
-    return [16]
+                    bitdepths.add(24)
+                elif "S32" in fmt:
+                    bitdepths.add(32)
+
+        # SAMPLE_BITS: [16 24]
+        if "SAMPLE_BITS:" in line:
+            # Range case
+            m = re.search(r"\[(\d+)\s+(\d+)\]", line)
+            if m:
+                low = int(m.group(1))
+                high = int(m.group(2))
+                bitdepths.add(low)
+                bitdepths.add(high)
+            else:
+                # Single value case: SAMPLE_BITS: 16
+                val = line.replace("SAMPLE_BITS:", "").strip()
+                if val.isdigit():
+                    bitdepths.add(int(val))
+
+        # SUBFORMAT is informational — never touch bitdepths
+
+    # Fallback if ALSA reports nothing
+    if not bitdepths:
+        return [16]
+
+    return sorted(bitdepths)
 
 
 def detect_samplerates(card, device):

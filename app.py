@@ -68,30 +68,6 @@ def detect_capture_card():
     c = cards[0]
     return c["card"], c["device"], c["name"]
 
-def detect_channel_count(card, device):
-    """
-    Returns the maximum supported channel count for the ALSA device.
-    """
-    global hwcaps
-    # output = dump_hw_params(card, device)
-    for line in hwcaps["raw"].splitlines():
-        if "CHANNELS:" in line:
-            line = line.replace("CHANNELS:", "").strip()
-
-            # Case 1: single number, e.g. "2"
-            if line.isdigit():
-                return int(line)
-
-            # Case 2: range, e.g. "[1 2]"
-            m = re.search(r"\[(\d+)\s+(\d+)\]", line)
-            if m:
-                low = int(m.group(1))
-                high = int(m.group(2))
-                return high  # use max supported channels
-
-    return 2  # fallback
-    
-
 # ------------------------------------------------------------
 # HW PARAMS (CHANNELS / FORMAT / RATE)
 # ------------------------------------------------------------
@@ -316,8 +292,8 @@ def set_card():
     # Now parse from cached raw dump
     hwcaps["bitdepths"] = detect_bitdepths(selected_card, selected_device)
     hwcaps["samplerates"] = detect_samplerates(selected_card, selected_device)
-    hwcaps["channels"] = detect_channels(selected_card, selected_device)
-    hwcaps["input_sources"] = detect_input_sources(selected_card, selected_device)
+    hwcaps["channels"] = detect_channel_count(selected_card, selected_device)
+    hwcaps["input_sources"] = detect_input_selector(selected_card, selected_device)
 
 
 

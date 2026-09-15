@@ -1,4 +1,5 @@
-markdown# Live Browser Audio Monitoring & Dynamic Pipelines
+markdown
+## Live Browser Audio Monitoring & Dynamic Pipelines
 
 This document details the decoupled architecture used to tap the live hardware audio stream. It allows users to start or stop browser-based monitoring independently of physical file recording.
 

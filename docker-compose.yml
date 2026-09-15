@@ -1,5 +1,5 @@
-
 services:
+  #audio-recorder
   audio-recorder:
     build:
       context: https://github.com/raouldeejay/docker-audio-recorder.git
@@ -7,16 +7,11 @@ services:
     container_name: docker-audio-recorder
     ports:
       - "5000:5000"
-    devices:
-      - /dev/snd:/dev/snd
-    device_cgroup_rules:
-      - 'c 189:* rmw'
-    group_add:
-      - audio
     volumes:
       - ./recordings:/app/recordings
-      - /etc/asound.conf:/etc/asound.conf:ro
-      - /usr/share/alsa:/usr/share/alsa:ro
+    devices:
+      - /dev/snd:/dev/snd  # Grant access to audio
     environment:
       - FLASK_ENV=production
+      - AUDIO_DEVICE=default  # Can be changed to specific device
     privileged: false

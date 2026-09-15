@@ -192,3 +192,191 @@ function stopMonitoringGracefully(player, btn) {
 ### Waarom deze specifieke JavaScript-aanpak nodig is:
 1. **`player.src = ""` & `player.load()`:** Als je alleen `.pause()` gebruikt, houdt de browser de HTTP-verbinding naar je Flask-container op de Raspberry Pi open op de achtergrond. Dit zorgt ervoor dat `ffmpeg` blijft transcoderen en data blijft sturen. Door de `src` leeg te maken en `.load()` aan te roepen, dwing je de browser de netwerkverbinding fysiek te verbreken.
 2. **De Live Edge Tracker:** Wanneer het netwerk op de Pi of je wifi-netwerk even hapert, zal de HTML5-speler de audio vertragen in plaats van frames skippen. De `startLatencyTracker`-functie controleert continu het verschil tussen de afspeelkop (`currentTime`) en het einde van de binnengekomen data (`buffered.end`). Als dit gat te groot wordt, 'skipt' de code automatisch naar voren om de vertraging te herstellen naar < 200ms.
+
+## 6. Live Audio Metering & Waveform Display (Web Audio API)
+
+Om live volumeniveaus (metering) en een bewegende golfvorm (waveform) te tonen zonder de processor van de Raspberry Pi 4 extra te belasten, gebruiken we de **Web Audio API** in de browser. De browser analyseert de inkomende audiostream in realtime via de geluidskaart van de client.
+
+[Flask Stream Endpoint] ──►  element ──► [Web Audio AudioContext]│┌──────────────┴──────────────┐▼                             ▼[AnalyserNode: Waveform]     [AnalyserNode: Levels]│                             │▼                             ▼ (Tekenen)            DOM / Progress Bars
+### Frontend Code-integratie (`index.html`)
+
+Vervang het frontend-gedeelte of voeg de onderstaande HTML-, CSS- en JavaScript-structuur toe aan je applicatie.
+
+#### HTML & CSS UI-elementen
+```html
+<div class="audio-control-panel">
+    <h3>Hardware Audio Monitor</h3>
+    <button id="monitorBtn" onclick="toggleMonitor()">Luister Live</button>
+    <audio id="livePlayer" style="display:none;" preload="none" crossorigin="anonymous"></audio>
+
+    <!-- Visuele meters -->
+    <div class="meter-container" style="margin-top: 20px; font-family: sans-serif;">
+        <!-- Waveform Canvas -->
+        <label>Live Waveform:</label>
+        <canvas id="waveformCanvas" width="500" height="100" style="background: #111; display: block; margin-bottom: 15px; border-radius: 4px;"></canvas>
+
+        <!-- VU / Level Meters -->
+        <label>Volume Level (Peak):</label>
+        <div style="background: #333; width: 100%; height: 20px; border-radius: 4px; overflow: hidden; margin-bottom: 10px;">
+            <div id="volumeBar" style="background: linear-gradient(to right, #2ecc71 70%, #f1c40f 85%, #e74c3c 100%); width: 0%; height: 100%; transition: width 0.1s ease;"></div>
+        </div>
+        <small id="dbValue" style="color: #666;">Peak Level: -Inf dB</small>
+    </div>
+</div>
+```
+
+#### JavaScript Engine & Audio Analyse
+```javascript
+let isMonitoring = false;
+let latencyInterval = null;
+let animationFrameId = null;
+
+// Web Audio API variabelen
+let audioContext = null;
+let audioSource = null;
+let analyser = null;
+
+function toggleMonitor() {
+    const player = document.getElementById('livePlayer');
+    const btn = document.getElementById('monitorBtn');
+    
+    if (!isMonitoring) {
+        player.src = "/api/stream?t=" + new Date().getTime();
+        player.muted = false;
+        
+        player.play().then(() => {
+            btn.innerText = "Stop Luisteren";
+            isMonitoring = true;
+            
+            // Initialiseer en start de visuele meters
+            setupAudioAnalysis(player);
+            startLatencyTracker(player);
+        }).catch(err => console.error("Audio afspelen mislukt:", err));
+        
+    } else {
+        stopMonitoringGracefully(player, btn);
+    }
+}
+
+function setupAudioAnalysis(player) {
+    // 1. Initialiseer AudioContext (eenmalig of herstarten)
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    // 2. Verbind het HTML5 audio-element als bron binnen de Web Audio API
+    // Let op: 'crossorigin="anonymous"' op het audio-element is verplicht wegens CORS security regels!
+    if (!audioSource) {
+        audioSource = audioContext.createMediaElementSource(player);
+    }
+    
+    // 3. Maak een AnalyserNode aan voor realtime data-extractie
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512; // Bepaalt de resolutie van de waveform/meters
+    
+    // 4. Koppel de keten aan elkaar: Bron -> Analyser -> Speakers van de gebruiker
+    audioSource.connect(analyser);
+    analyser.connect(audioContext.destination);
+    
+    // 5. Start de visuele teken-lus (render loop)
+    drawMeters();
+}
+
+function drawMeters() {
+    if (!isMonitoring) return;
+    
+    const canvas = document.getElementById('waveformCanvas');
+    const canvasCtx = canvas.getContext('2d');
+    const volumeBar = document.getElementById('volumeBar');
+    const dbValue = document.getElementById('dbValue');
+    
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    function render() {
+        if (!isMonitoring) return;
+        animationFrameId = requestAnimationFrame(render);
+        
+        // Haal de realtime waveform-data (tijddomein) op
+        analyser.getByteTimeDomainData(dataArray);
+        
+        // --- 1. TEKEN DE WAVEFORM ---
+        canvasCtx.fillStyle = '#111';
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+        canvasCtx.lineWidth = 2;
+        canvasCtx.strokeStyle = '#2ecc71'; // Groene lijn
+        canvasCtx.beginPath();
+        
+        let sliceWidth = canvas.width * 1.0 / bufferLength;
+        let x = 0;
+        
+        for (let i = 0; i < bufferLength; i++) {
+            let v = dataArray[i] / 128.0; // Normaliseer rond de 1.0
+            let y = v * canvas.height / 2;
+            
+            if (i === 0) {
+                canvasCtx.moveTo(x, y);
+            } else {
+                canvasCtx.lineTo(x, y);
+            }
+            x += sliceWidth;
+        }
+        
+        canvasCtx.lineTo(canvas.width, canvas.height / 2);
+        canvasCtx.stroke();
+        
+        // --- 2. BEREKEN VOLUME LEVEL (RMS & PEAK) ---
+        let maxVal = 0;
+        for (let i = 0; i < bufferLength; i++) {
+            // Converteer 8-bit unsigned int (0-255) naar genormaliseerde amplitude (-1.0 tot 1.0)
+            let amplitude = Math.abs((dataArray[i] - 128) / 128);
+            if (amplitude > maxVal) {
+                maxVal = amplitude;
+            }
+        }
+        
+        // Zet amplitude om naar decibels (dBFS)
+        let db = 20 * Math.log10(maxVal);
+        if (db < -60 || maxVal === 0) db = -60; // Bodemlimiet
+        
+        // Bereken percentage voor de visuele VU-balk (lineaire schaal weergave)
+        let volumePercentage = Math.min(100, Math.max(0, (db + 60) * (100 / 60)));
+        volumeBar.style.width = volumePercentage + "%";
+        
+        // Update tekstuele dB-waarde
+        dbValue.innerText = db === -60 ? "Peak Level: -Inf dB" : `Peak Level: ${db.toFixed(1)} dBFS`;
+    }
+    
+    render();
+}
+
+function stopMonitoringGracefully(player, btn) {
+    isMonitoring = false;
+    
+    // Stop de visualisatie-animatie direct
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+    }
+    
+    if (latencyInterval) {
+        clearInterval(latencyInterval);
+        latencyInterval = null;
+    }
+    
+    player.pause();
+    player.src = "";
+    player.load();
+    
+    // Reset visuele meters naar nul-stand
+    document.getElementById('volumeBar').style.width = "0%";
+    document.getElementById('dbValue').innerText = "Peak Level: -Inf dB";
+    
+    btn.innerText = "Luister Live";
+    isMonitoring = false;
+}
+```
+
+### Technische verantwoording over LUFS
+Echte **LUFS (Loudness Units relative to Full Scale)** metingen vereisen een complex algoritme (ITU-R BS.1770) dat gebruikmaakt van specifieke frequentiefilters (K-weighting) over een langere tijdsperiode (Short-term en Integrated LUFS). 
+
+Omdat dit puur voor monitoring en clipping-preventie is tijdens het opnemen, maakt dit script gebruik van **dBFS Peak Level** detectie. Dit reageert directer op harde pieken om oversturing direct zichtbaar te maken. Dit is de meest efficiënte oplossing voor realtime browsersystemen op embedded apparatuur.

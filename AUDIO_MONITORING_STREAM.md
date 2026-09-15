@@ -1,4 +1,4 @@
-markdown
+
 ## Live Browser Audio Monitoring & Dynamic Pipelines
 
 This document details the decoupled architecture used to tap the live hardware audio stream. It allows users to start or stop browser-based monitoring independently of physical file recording.
@@ -7,10 +7,9 @@ This document details the decoupled architecture used to tap the live hardware a
 
 Because the data capture worker (`arecord`) and individual encoding workers (`ffmpeg`) are decoupled via a Python background multiplexer, monitoring client instances do not interfere with the active file writer pipeline.
 
-You can execute the exact pipeline sequence detailed below:
+You can execute the exact pipeline sequence detailed below
 
-Wees voorzichtig met code.[User Action]            [Hardware Status]                 [Data Stream Routing Path]───────────────────────────────────────────────────────────────────────────────────────────────Start Monitoring  ──► arecord initialises          ──► Raw PCM ──► Python Queue ──► BrowserStart Recording   ──► Storage Encoder initialises  ──► Raw PCM ──► Split Path   ──► Browser & Local Storage FileStop Monitoring   ──► Browser client disconnects   ──► Raw PCM ──► Local Storage File OnlyStop Recording    ──► Storage Encoder flushes      ──► Pipeline teardown completely closed
----
+[User Action]            [Hardware Status]                 [Data Stream Routing Path]───────────────────────────────────────────────────────────────────────────────────────────────Start Monitoring  ──► arecord initialises          ──► Raw PCM ──► Python Queue ──► BrowserStart Recording   ──► Storage Encoder initialises  ──► Raw PCM ──► Split Path   ──► Browser & Local Storage FileStop Monitoring   ──► Browser client disconnects   ──► Raw PCM ──► Local Storage File OnlyStop Recording    ──► Storage Encoder flushes      ──► Pipeline teardown completely closed
 
 ## 2. Decoupled Routing Architecture
 

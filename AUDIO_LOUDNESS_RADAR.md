@@ -399,7 +399,8 @@ function stopMonitoringGracefully(player, btn) {
     btn.innerText = "Luister Live";
 }
 
-```4. Key Considerations for Network & Processing Safety
+```
+4. Key Considerations for Network & Processing Safety
 *.CORS Security Constraints: Because Web Audio API analyzes raw samples from an external HTTP source, your media stream endpoint must serve identical Origin parameters. The HTML5 audio element must include the crossorigin="anonymous" tag, and your Flask response header array must return Access-Control-Allow-Origin: 
 *.Buffer Overrun Prevention: If the network link between your web browser and the Raspberry Pi slows down, the streaming queue will begin dropping chunks. The q.put_nowait(data) clause inside audio_multiplexer_loop prevents delayed clients from locking up the memory of your Python app.
 *.RAM Cleaning Protocol: Simply pausing an HTML5 stream leaves the network socket connection open in the background, keeping the transcoding process alive. The player.src = "" and player.load() steps inside stopMonitoringGracefully are required to cleanly sever the socket link and reclaim processing cores on the Pi.

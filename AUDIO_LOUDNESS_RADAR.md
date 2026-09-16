@@ -264,4 +264,143 @@ function setupWebAudioProcessing(player) {
     preFilter.type = "highshelf";
     preFilter.frequency.value = 1500; 
     preFilter.Q.value = 1.0;
-preFilter.gain.value = 4.0; // +4dB Boost// --- BS.1770 STAGE 2: RLB High-Pass / Low-Cut Filter ---const rlbFilter = audioContext.createBiquadFilter();rlbFilter.type = "highpass";rlbFilter.frequency.value = 38;rlbFilter.Q.value = 0.5;// Connect the Filter Network MatrixaudioSource.connect(preFilter);preFilter.connect(rlbFilter);// Create Analyser Node connected to the filtered stream outputlufsAnalyser = audioContext.createAnalyser();lufsAnalyser.fftSize = 1024;rlbFilter.connect(lufsAnalyser);// Pass the unprocessed direct output stream to speakers for accurate clean monitoringaudioSource.connect(audioContext.destination);// Initialize Canvas Grid Layout and trigger execution loopinitRadarCanvas();executeAnalysisLoop();}function initRadarCanvas() {const canvas = document.getElementById('radarCanvas');const ctx = canvas.getContext('2d');ctx.clearRect(0, 0, canvas.width, canvas.height);// Draw target visual grid ring markingsctx.strokeStyle = '#222';ctx.lineWidth = 1;for (let r = 0.25; r <= 1.0; r += 0.25) {ctx.beginPath();ctx.arc(canvas.width/2, canvas.height/2, (canvas.width/2 - 10) * r, 0, 2 * Math.PI);ctx.stroke();}}function executeAnalysisLoop() {if (!isMonitoring) return;animationFrameId = requestAnimationFrame(executeAnalysisLoop);const bufferLength = lufsAnalyser.frequencyBinCount;const dataArray = new Float32Array(bufferLength);lufsAnalyser.getFloatTimeDomainData(dataArray);let sumOfSquares = 0;let peakValue = 0;for (let i = 0; i < bufferLength; i++) {const val = dataArray[i];sumOfSquares += val * val;if (Math.abs(val) > peakValue) peakValue = Math.abs(val);}// 1. Calculate Real-time Peak Level (dBFS)let peakDB = 20 * Math.log10(peakValue);if (peakDB < -70 || peakValue === 0) peakDB = -70;const peakPercent = Math.min(100, Math.max(0, (peakDB + 70) * (100 / 70)));document.getElementById('peakBar').style.width = peakPercent + "%";document.getElementById('peakTxt').innerText = peakDB === -70 ? "Peak: -Inf dBFS" : Peak: ${peakDB.toFixed(1)} dBFS;// 2. Calculate Momentary LUFS (400ms Windows Estimation)// The -0.691 constant is the specific BS.1770 Loudness Calibration offset factorlet meanSquare = sumOfSquares / bufferLength;let momentaryLUFS = 10 * Math.log10(meanSquare) - 0.691;if (momentaryLUFS < -70) momentaryLUFS = -70;document.getElementById('momentaryTxt').innerText = momentaryLUFS === -70 ? "-Inf LUFS" : ${momentaryLUFS.toFixed(1)} LUFS;document.getElementById('momentaryTxt').style.color = momentaryLUFS > -14 ? "#e74c3c" : "#2ecc71";// 3. Calculate Short-Term LUFS (Rolling 3-Second Average Buffer Window)shortTermBuffer.push(meanSquare);if (shortTermBuffer.length > 120) shortTermBuffer.shift(); // Keep trailing timeline data pointslet stMeanSquare = shortTermBuffer.reduce((a, b) => a + b, 0) / shortTermBuffer.length;let shortTermLUFS = 10 * Math.log10(stMeanSquare) - 0.691;if (shortTermLUFS < -70) shortTermLUFS = -70;document.getElementById('shortTermTxt').innerText = shortTermLUFS === -70 ? "-Inf LUFS" : ${shortTermLUFS.toFixed(1)} LUFS;// 4. Render Dynamic Clarity M Radar Sweep Sweep PointrenderRadarSweep(shortTermLUFS);}function renderRadarSweep(lufsValue) {const canvas = document.getElementById('radarCanvas');const ctx = canvas.getContext('2d');const centerX = canvas.width / 2;const centerY = canvas.height / 2;const maxRadius = centerX - 10;// Map LUFS value scope scale (-70dB to 0dB) linearly into radius space dimensionsconst normalizedLoudness = (lufsValue + 70) / 70; // Map down range: 0.0 to 1.0const targetRadius = maxRadius * normalizedLoudness;// Resolve polar vectors array mapping layout coordinate markersconst targetX = centerX + targetRadius * Math.cos(radarAngle);const targetY = centerY + targetRadius * Math.sin(radarAngle);// Render step sweeping point plot indicator markerctx.fillStyle = lufsValue > -14 ? '#e74c3c' : '#3498db'; // Turn point red if clipping target threshold boundsctx.beginPath();ctx.arc(targetX, targetY, 2, 0, 2 * Math.PI);ctx.fill();// Advance angle parameter tracking indicators (approx 1 sweep lap revolution per minute)radarAngle += 0.005;if (radarAngle > 2 * Math.PI) {radarAngle = 0;// Fade out previous historical traces to prevent sweep accumulation clutteringctx.fillStyle = 'rgba(9,9,9,0.85)';ctx.beginPath();ctx.arc(centerX, centerY, maxRadius + 5, 0, 2 * Math.PI);ctx.fill();initRadarCanvas();}}function startLatencyTracker(player) {latencyInterval = setInterval(() => {if (!player.buffered.length) return;const bufferedEnd = player.buffered.end(player.buffered.length - 1);const latency = bufferedEnd - player.currentTime;// If client media element drops behind active pipeline index context by 1.5 seconds,// force buffer skip ahead to catch up up seamlessly to modern edge (<200ms)if (latency > 1.5) {player.currentTime = bufferedEnd - 0.2;}}, 1000);}function stopMonitoringGracefully(player, btn) {isMonitoring = false;if (animationFrameId) cancelAnimationFrame(animationFrameId);if (latencyInterval) clearInterval(latencyInterval);player.pause();player.src = ""; // Sever active connection socket stream processing loops immediatelyplayer.load();    // Deallocate standard decoder context pipelinesdocument.getElementById('peakBar').style.width = "0%";document.getElementById('peakTxt').innerText = "Peak: -Inf dBFS";document.getElementById('momentaryTxt').innerText = "-Inf LUFS";document.getElementById('shortTermTxt').innerText = "-Inf LUFS";btn.innerText = "Luister Live";}```4. Key Considerations for Network & Processing SafetyCORS Security Constraints: Because Web Audio API analyzes raw samples from an external HTTP source, your media stream endpoint must serve identical Origin parameters. The HTML5 audio element must include the crossorigin="anonymous" tag, and your Flask response header array must return Access-Control-Allow-Origin: *.Buffer Overrun Prevention: If the network link between your web browser and the Raspberry Pi slows down, the streaming queue will begin dropping chunks. The q.put_nowait(data) clause inside audio_multiplexer_loop prevents delayed clients from locking up the memory of your Python app.RAM Cleaning Protocol: Simply pausing an HTML5 stream leaves the network socket connection open in the background, keeping the transcoding process alive. The player.src = "" and player.load() steps inside stopMonitoringGracefully are required to cleanly sever the socket link and reclaim processing cores on the Pi.
+    preFilter.gain.value = 4.0; // +4dB Boost
+    // --- BS.1770 STAGE 2: RLB High-Pass / Low-Cut Filter ---
+    const rlbFilter = audioContext.createBiquadFilter();rlbFilter.type = "highpass";
+    rlbFilter.frequency.value = 38;
+    rlbFilter.Q.value = 0.5;// Connect the Filter Network Matrix
+    audioSource.connect(preFilter);
+    preFilter.connect(rlbFilter);// Create Analyser Node connected to the filtered stream 
+    outputlufsAnalyser = audioContext.createAnalyser();
+    lufsAnalyser.fftSize = 1024;
+    rlbFilter.connect(lufsAnalyser);// Pass the unprocessed direct output stream to speakers for accurate clean monitoring
+    audioSource.connect(audioContext.destination);// Initialize Canvas Grid Layout and trigger execution 
+    loopinitRadarCanvas();
+    executeAnalysisLoop();
+}
+
+function initRadarCanvas() {
+    const canvas = document.getElementById('radarCanvas');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);// Draw target visual grid ring markings
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 1;
+    for (let r = 0.25; r <= 1.0; r += 0.25) {
+            ctx.beginPath();
+            ctx.arc(canvas.width/2, canvas.height/2, (canvas.width/2 - 10) * r, 0, 2 * Math.PI);
+            ctx.stroke();
+    }
+}
+
+function executeAnalysisLoop() {
+    if (!isMonitoring) 
+        return;
+    animationFrameId = requestAnimationFrame(executeAnalysisLoop);
+    const bufferLength = lufsAnalyser.frequencyBinCount;
+    const dataArray = new Float32Array(bufferLength);
+    lufsAnalyser.getFloatTimeDomainData(dataArray);
+    let sumOfSquares = 0;
+    let peakValue = 0;
+    for (let i = 0; i < bufferLength; i++) {
+        const val = dataArray[i];
+        sumOfSquares += val * val;
+        if (Math.abs(val) > peakValue) 
+            peakValue = Math.abs(val);
+    }
+    // 1. Calculate Real-time Peak Level (dBFS)
+    let peakDB = 20 * Math.log10(peakValue);
+    if (peakDB < -70 || peakValue === 0) 
+        peakDB = -70;
+    const peakPercent = Math.min(100, Math.max(0, (peakDB + 70) * (100 / 70)));
+    document.getElementById('peakBar').style.width = peakPercent + "%";
+    document.getElementById('peakTxt').innerText = peakDB === -70 ? "Peak: -Inf dBFS" : Peak: ${peakDB.toFixed(1)} dBFS;
+    // 2. Calculate Momentary LUFS (400ms Windows Estimation)// The -0.691 constant is the specific BS.1770 Loudness Calibration offset factor
+    let meanSquare = sumOfSquares / bufferLength;
+    let momentaryLUFS = 10 * Math.log10(meanSquare) - 0.691;
+    if (momentaryLUFS < -70) 
+        momentaryLUFS = -70;
+    document.getElementById('momentaryTxt').innerText = momentaryLUFS === -70 ? "-Inf LUFS" : ${momentaryLUFS.toFixed(1)} LUFS;
+    document.getElementById('momentaryTxt').style.color = momentaryLUFS > -14 ? "#e74c3c" : "#2ecc71";
+    // 3. Calculate Short-Term LUFS (Rolling 3-Second Average Buffer Window)
+    shortTermBuffer.push(meanSquare);
+    if (shortTermBuffer.length > 120) 
+        shortTermBuffer.shift(); 
+    // Keep trailing timeline data points
+    let stMeanSquare = shortTermBuffer.reduce((a, b) => a + b, 0) / shortTermBuffer.length;
+    let shortTermLUFS = 10 * Math.log10(stMeanSquare) - 0.691;
+    if (shortTermLUFS < -70) 
+        shortTermLUFS = -70;
+    document.getElementById('shortTermTxt').innerText = shortTermLUFS === -70 ? "-Inf LUFS" : ${shortTermLUFS.toFixed(1)} LUFS;
+    // 4. Render Dynamic Clarity M Radar Sweep Sweep Point
+    renderRadarSweep(shortTermLUFS);
+}
+
+function renderRadarSweep(lufsValue) {
+    const canvas = document.getElementById('radarCanvas');
+    const ctx = canvas.getContext('2d');
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const maxRadius = centerX - 10;
+    // Map LUFS value scope scale (-70dB to 0dB) linearly into radius space dimensions
+    const normalizedLoudness = (lufsValue + 70) / 70; 
+    // Map down range: 0.0 to 1.0
+    const targetRadius = maxRadius * normalizedLoudness;
+    // Resolve polar vectors array mapping layout coordinate markers
+    const targetX = centerX + targetRadius * Math.cos(radarAngle);
+    const targetY = centerY + targetRadius * Math.sin(radarAngle);
+    // Render step sweeping point plot indicator marker
+    ctx.fillStyle = lufsValue > -14 ? '#e74c3c' : '#3498db'; 
+    // Turn point red if clipping target threshold bounds
+    ctx.beginPath();
+    ctx.arc(targetX, targetY, 2, 0, 2 * Math.PI);
+    ctx.fill();
+    // Advance angle parameter tracking indicators (approx 1 sweep lap revolution per minute)
+    radarAngle += 0.005;
+    if (radarAngle > 2 * Math.PI) {
+        radarAngle = 0;
+        // Fade out previous historical traces to prevent sweep accumulation cluttering
+        ctx.fillStyle = 'rgba(9,9,9,0.85)';
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, maxRadius + 5, 0, 2 * Math.PI);
+        ctx.fill();
+        initRadarCanvas();
+    }
+}
+
+function startLatencyTracker(player) {
+    latencyInterval = setInterval(() => {
+        if (!player.buffered.length) 
+            return;
+        const bufferedEnd = player.buffered.end(player.buffered.length - 1);
+        const latency = bufferedEnd - player.currentTime;
+        // If client media element drops behind active pipeline index context by 1.5 seconds,
+        // force buffer skip ahead to catch up up seamlessly to modern edge (<200ms)
+        if (latency > 1.5) {
+            player.currentTime = bufferedEnd - 0.2;
+        }
+    }, 1000);
+}
+
+function stopMonitoringGracefully(player, btn) {
+    isMonitoring = false;
+    if (animationFrameId) 
+        cancelAnimationFrame(animationFrameId);
+    if (latencyInterval) 
+        clearInterval(latencyInterval);
+    player.pause();
+    player.src = ""; 
+    // Sever active connection socket stream processing loops immediately
+    player.load();    
+    // Deallocate standard decoder context pipelines
+    document.getElementById('peakBar').style.width = "0%";
+    document.getElementById('peakTxt').innerText = "Peak: -Inf dBFS";
+    document.getElementById('momentaryTxt').innerText = "-Inf LUFS";
+    document.getElementById('shortTermTxt').innerText = "-Inf LUFS";
+    btn.innerText = "Luister Live";
+}
+
+```4. Key Considerations for Network & Processing Safety
+*.CORS Security Constraints: Because Web Audio API analyzes raw samples from an external HTTP source, your media stream endpoint must serve identical Origin parameters. The HTML5 audio element must include the crossorigin="anonymous" tag, and your Flask response header array must return Access-Control-Allow-Origin: 
+*.Buffer Overrun Prevention: If the network link between your web browser and the Raspberry Pi slows down, the streaming queue will begin dropping chunks. The q.put_nowait(data) clause inside audio_multiplexer_loop prevents delayed clients from locking up the memory of your Python app.
+*.RAM Cleaning Protocol: Simply pausing an HTML5 stream leaves the network socket connection open in the background, keeping the transcoding process alive. The player.src = "" and player.load() steps inside stopMonitoringGracefully are required to cleanly sever the socket link and reclaim processing cores on the Pi.
+

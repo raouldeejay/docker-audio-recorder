@@ -333,18 +333,18 @@ function loadCaps() {
             // Determine default bitdepth
             let defaultBitdepth = caps.bitdepths.includes(24)
                 ? 24
-                : caps.bitdepths[0];
+                : caps.bitdepths[caps.samplerates.count() -1];
 
             // Determine default samplerate
             let defaultSamplerate = caps.samplerates.includes(48000)
                 ? 48000
-                : caps.samplerates[0];
+                : caps.samplerates[caps.samplerates.count() -1;
 
             // Apply defaults ONLY if user has not selected before
             const _bd = previousBitdepth ?? defaultBitdepth;
             const _sr = previousSamplerate ?? defaultSamplerate;
 
-            br.value = _bd;
+            bd.value = _bd;
             sr.value = _sr;
         });
 }

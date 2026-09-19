@@ -185,7 +185,7 @@ def detect_samplerates(card, device):
             if m:
                 low = int(m.group(1))
                 high = int(m.group(2))
-                common = [8000, 16000, 22050, 32000, 44100, 48000, 96000]
+                common = [8000, 16000, 22050, 32000, 44100, 48000, 88200, 96000]
                 return [r for r in common if low <= int(r) <= high]
                 
             # Case: single number

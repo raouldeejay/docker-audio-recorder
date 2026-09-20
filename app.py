@@ -5,6 +5,7 @@ import datetime
 import threading
 import time
 import socket
+from pathlib import Path
 
 from flask import Flask, render_template, request, jsonify
 
@@ -101,6 +102,57 @@ def dump_hw_params(card, device):
         return output
 
     return ""
+
+def get_hwcaps_non_exclusive(card_index, device_index):
+
+    global hwcaps
+    # Paths for device name and streaming capabilities
+    id_file = Path(f"/proc/asound/card{card_index}/id")
+    stream_file = Path(f"/proc/asound/card{card_index}/stream0")
+    
+    # 1. Get the short name of the card (e.g., "U24XL")
+    if id_file.exists():
+        hwcaps["name"] = id_file.read_text().strip()
+        
+    # 2. Parse capabilities from stream0 safely
+    if stream_file.exists():
+        content = stream_file.read_text()
+        
+        # We only care about Capture for recording setups
+        sections = re.split(r'^(Playback|Capture):', content, flags=re.MULTILINE)
+        capture_block = ""
+        
+        current_mode = None
+        for item in sections:
+            if item in ["Playback", "Capture"]:
+                current_mode = item
+                continue
+            if current_mode == "Capture":
+                capture_block = item
+                break
+                
+        if capture_block:
+            # Extract values
+            bits_found = re.findall(r'Bits:\s*(\d+)', capture_block)
+            rates_lines = re.findall(r'Rates:\s*(.+)', capture_block)
+            channels_found = re.findall(r'Channels:\s*(\d+)', capture_block)
+            
+            # Process bit depths and sample rates
+            bitdepths = sorted(list(set(int(b) for b in bits_found)))
+            
+            samplerates = []
+            for line in rates_lines:
+                samplerates.extend([int(r.strip()) for r in line.split(',')])
+            samplerates = sorted(list(set(samplerates)))
+            
+            # Process channels (pick the maximum supported if multiple profiles exist)
+            channels = max([int(c) for c in channels_found]) if channels_found else 2
+            
+            hwcaps["bitdepths"] = bitdepths
+            hwcaps["samplerates"] = samplerates
+            hwcaps["channels"] = channels
+            
+    return hwcaps
 
 
 def detect_channel_count(card, device):
@@ -300,16 +352,15 @@ def set_card():
     global selected_card, selected_device, selected_name, hwcaps
     # Cache raw hw params ONCE
     if hwcaps["card"] != selected_card:
-        raw = dump_hw_params(selected_card, selected_device)
+        #raw = dump_hw_params(selected_card, selected_device)
+        
+        # bitdepth and samplerate prefilled
+        hwcaps = get_hwcaps_non_exclusive(selected_card, selected_device)
         hwcaps["card"] = selected_card
         hwcaps["device"] = selected_device
         hwcaps["name"] = selected_name
-        hwcaps["raw"] = raw
+        #hwcaps["raw"] = raw
 
-        # Now parse from cached raw dump
-        hwcaps["bitdepths"] = detect_bitdepths(selected_card, selected_device)
-        hwcaps["samplerates"] = detect_samplerates(selected_card, selected_device)
-        hwcaps["channels"] = detect_channel_count(selected_card, selected_device)
 
 
     print("RAW:", repr(hwcaps["raw"]))
@@ -429,8 +480,7 @@ def api_caps():
         "channels": hwcaps["channels"],
         "name": hwcaps["name"],
         "card": hwcaps["card"],
-        "device": hwcaps["device"],
-        "RAW": hwcaps["raw"]
+        "device": hwcaps["device"]
     })
 
 @app.route("/api/cards")

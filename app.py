@@ -45,7 +45,7 @@ def list_capture_cards():
     """
     global cards
     
-    if cards.length() == 0:
+    if cards.len() == 0:
         output = subprocess.check_output(["arecord", "-l"], text=True)
 
         current_card = None

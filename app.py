@@ -11,6 +11,7 @@ from flask import Flask, render_template, request, jsonify
 app = Flask(__name__)
 
 # Global recorder process
+cards = []
 arecord_process = None
 RECORDINGS_ROOT = "/app/recordings/"
 selected_card = None
@@ -41,24 +42,26 @@ def list_capture_cards():
         ...
     ]
     """
-    output = subprocess.check_output(["arecord", "-l"], text=True)
-    cards = []
+    global cards
+    
+    if card.length() === 0:
+        output = subprocess.check_output(["arecord", "-l"], text=True)
 
-    current_card = None
+        current_card = None
 
-    for line in output.splitlines():
-        m = re.search(r"card (\d+): ([^[]+)\[([^\]]+)\]", line)
-        if m:
-            current_card = {
-                "card": int(m.group(1)),
-                "name": m.group(3).strip()
-            }
+        for line in output.splitlines():
+            m = re.search(r"card (\d+): ([^[]+)\[([^\]]+)\]", line)
+            if m:
+                current_card = {
+                    "card": int(m.group(1)),
+                    "name": m.group(3).strip()
+                }
 
-        d = re.search(r"device (\d+): ([^[]+)\[([^\]]+)\]", line)
-        if d and current_card:
-            current_card["device"] = int(d.group(1))
-            cards.append(current_card)
-            current_card = None
+            d = re.search(r"device (\d+): ([^[]+)\[([^\]]+)\]", line)
+            if d and current_card:
+                current_card["device"] = int(d.group(1))
+                cards.append(current_card)
+                current_card = None
 
     return cards
 

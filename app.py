@@ -299,16 +299,17 @@ def stop_arecord():
 def set_card():
     global selected_card, selected_device, selected_name, hwcaps
     # Cache raw hw params ONCE
-    raw = dump_hw_params(selected_card, selected_device)
-    hwcaps["card"] = selected_card
-    hwcaps["device"] = selected_device
-    hwcaps["name"] = selected_name
-    hwcaps["raw"] = raw
+    if hwcaps["card"] != selected_card:
+        raw = dump_hw_params(selected_card, selected_device)
+        hwcaps["card"] = selected_card
+        hwcaps["device"] = selected_device
+        hwcaps["name"] = selected_name
+        hwcaps["raw"] = raw
 
-    # Now parse from cached raw dump
-    hwcaps["bitdepths"] = detect_bitdepths(selected_card, selected_device)
-    hwcaps["samplerates"] = detect_samplerates(selected_card, selected_device)
-    hwcaps["channels"] = detect_channel_count(selected_card, selected_device)
+        # Now parse from cached raw dump
+        hwcaps["bitdepths"] = detect_bitdepths(selected_card, selected_device)
+        hwcaps["samplerates"] = detect_samplerates(selected_card, selected_device)
+        hwcaps["channels"] = detect_channel_count(selected_card, selected_device)
 
 
     print("RAW:", repr(hwcaps["raw"]))
@@ -453,15 +454,16 @@ def api_select_card():
     global selected_card, selected_device, selected_name
 
     data = request.json or {}
-    selected_card = data.get("card")
-    selected_device = data.get("device")
+    if selected_card != date.get("card"):
+        selected_card = data.get("card")
+        selected_device = data.get("device")
 
-    # Store name
-    for c in list_capture_cards():
-        if c["card"] == selected_card and c["device"] == selected_device:
-            selected_name = c["name"]
+        # Store name
+        for c in list_capture_cards():
+            if c["card"] == selected_card and c["device"] == selected_device:
+                selected_name = c["name"]
 
-    set_card()
+        set_card()
 
     return jsonify({"status": "ok"})
 

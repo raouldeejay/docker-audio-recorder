@@ -107,8 +107,8 @@ def get_hwcaps_non_exclusive(card_index, device_index):
 
     global hwcaps
     # Paths for device name and streaming capabilities
-    id_file = Path(f"/proc/asound/card{card_index}/id")
-    stream_file = Path(f"/proc/asound/card{card_index}/stream0")
+    id_file = Path(f"/mnt/asound/card{card_index}/id")
+    stream_file = Path(f"/mnt/asound/card{card_index}/stream0")
     
     # 1. Get the short name of the card (e.g., "U24XL")
     if id_file.exists():

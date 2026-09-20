@@ -85,24 +85,6 @@ def detect_capture_card():
 # ------------------------------------------------------------
 # HW PARAMS (CHANNELS / FORMAT / RATE)
 # ------------------------------------------------------------
-def dump_hw_params(card, device):
-    device_string = f"hw:{card},{device}"
-
-    proc = subprocess.Popen(
-        ["arecord", "-D", device_string, "--dump-hw-params"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True
-    )
-
-    output, _ = proc.communicate()
-
-    # ALSA may exit with code 1 even though output is valid
-    if output.strip():
-        return output
-
-    return ""
-
 def get_hwcaps_non_exclusive(card_index, device_index):
 
     global hwcaps
@@ -154,101 +136,6 @@ def get_hwcaps_non_exclusive(card_index, device_index):
             
     return hwcaps
 
-
-def detect_channel_count(card, device):
-    """
-    Returns the maximum supported channel count for the ALSA device.
-    """
-    global hwcaps
-    # output = dump_hw_params(card, device)
-    for line in hwcaps["raw"].splitlines():
-        if "CHANNELS:" in line:
-            line = line.replace("CHANNELS:", "").strip()
-
-            # Case 1: single number, e.g. "2"
-            if line.isdigit():
-                return int(line)
-
-            # Case 2: range, e.g. "[1 2]"
-            m = re.search(r"\[(\d+)\s+(\d+)\]", line)
-            if m:
-                low = int(m.group(1))
-                high = int(m.group(2))
-                return high  # use max supported channels
-
-    return 2  # fallback
-
-def detect_bitdepths(card, device):
-    """
-    Returns list of supported bit depths, e.g. [16, 24].
-    Combines FORMAT and SAMPLE_BITS, keeps entries unique.
-    Ignores SUBFORMAT completely.
-    """
-    global hwcaps
-    # output = dump_hw_params(card, device)
-    bitdepths = set()
-
-    for line in hwcaps["raw"].splitlines():
-
-        # FORMAT: S16_LE S24_3LE S32_LE
-        if "FORMAT:" in line:
-            formats = line.replace("FORMAT:", "").strip().split()
-            for fmt in formats:
-                if "S16" in fmt:
-                    bitdepths.add(16)
-                elif "S24" in fmt:
-                    bitdepths.add(24)
-                elif "S32" in fmt:
-                    bitdepths.add(32)
-
-        # SAMPLE_BITS: [16 24]
-        if "SAMPLE_BITS:" in line:
-            # Range case
-            m = re.search(r"\[(\d+)\s+(\d+)\]", line)
-            if m:
-                low = int(m.group(1))
-                high = int(m.group(2))
-                bitdepths.add(low)
-                bitdepths.add(high)
-            else:
-                # Single value case: SAMPLE_BITS: 16
-                val = line.replace("SAMPLE_BITS:", "").strip()
-                if val.isdigit():
-                    bitdepths.add(int(val))
-
-        # SUBFORMAT is informational — never touch bitdepths
-
-    # Fallback if ALSA reports nothing
-    if not bitdepths:
-        return [16]
-
-    return sorted(bitdepths)
-
-
-def detect_samplerates(card, device):
-    """
-    Returns list of supported samplerates based on RATE line.
-    """
-    global hwcaps
-    # output = dump_hw_params(card, device)
-    for line in hwcaps["raw"].splitlines():
-        if "RATE:" in line:
-            line = line.replace("RATE:", "").strip()
-
-            # Case: "[8000 48000]"
-            m = re.search(r"\[(\d+)\s+(\d+)\]", line)
-            if m:
-                low = int(m.group(1))
-                high = int(m.group(2))
-                common = [8000, 16000, 22050, 32000, 44100, 48000, 88200, 96000]
-                return [r for r in common if low <= int(r) <= high]
-                
-            # Case: single number
-            if line.isdigit():
-                return [int(line)]
-
-    return [44100, 48000]
-
 # ------------------------------------------------------------
 # SPDIF / LINE SELECTOR (dynamic)
 # ------------------------------------------------------------
@@ -270,7 +157,6 @@ def detect_input_selector(card):
             return numid
 
     return None
-
 
 def get_input_source(card, numid):
     output = subprocess.check_output(

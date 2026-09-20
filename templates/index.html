@@ -333,12 +333,12 @@ function loadCaps() {
             // Determine default bitdepth
             let defaultBitdepth = data.bitdepths.includes("24")
                 ? 24
-                : data.bitdepths[data.bitdepths.count() - 1];
+                : data.bitdepths[data.bitdepths.length - 1];
 
             // Determine default samplerate
             let defaultSamplerate = data.samplerates.includes("48000")
                 ? 48000
-                : data.samplerates[data.samplerates.count() - 1];
+                : data.samplerates[data.samplerates.length - 1];
 
             // Apply defaults ONLY if user has not selected before
             const _bd = previousBitdepth ?? defaultBitdepth;

@@ -306,7 +306,7 @@ def start_arecord(filename, samplerate, bitdepth, card, device):
     """
     Launch arecord as a subprocess.
     """
-    global arecord_process
+    global arecord_process, hwcaps
     filepath = RECORDINGS_ROOT + filename
     # Map bit depth to ALSA format
     if bitdepth == 16:
@@ -316,7 +316,7 @@ def start_arecord(filename, samplerate, bitdepth, card, device):
     else:
         raise ValueError("Unsupported bit depth")
 
-    channels = detect_channel_count(card, device)
+    channels = hwcaps["channels"] # detect_channel_count(card, device)
     
     device_string = f"hw:{card},{device}"
 

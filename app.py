@@ -7,7 +7,7 @@ import time
 import socket
 from pathlib import Path
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 
 app = Flask(__name__)
 
@@ -263,7 +263,6 @@ def set_card():
     print("RAW:", repr(hwcaps["raw"]))
 
 
-
 # ------------------------------------------------------------
 # FLASK ROUTES
 # ------------------------------------------------------------
@@ -415,4 +414,7 @@ def api_select_card():
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
+    
+    # init_continuous_audio_engine(samplerate=44100, bitdepth=16)
+        
     app.run(host="0.0.0.0", port=5000)

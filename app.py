@@ -14,11 +14,13 @@ app = Flask(__name__)
 # Global recorder process
 cards = []
 arecord_process = None
+ffmpeg_stream_process = None
+ffmpeg_recorder_process = None
+
 RECORDINGS_ROOT = "/app/recordings/"
 selected_card = None
 selected_device = None
 selected_name = None
-cards = None
 card = None
 device = None
 name = None
@@ -176,6 +178,8 @@ def get_input_source(card, numid):
 
 
 def set_input_source(card, numid, source):
+    global input_source
+    input_source = source
     value = 0 if source == "Line" else 1
     subprocess.check_call(
         ["amixer", "-c", str(card), "cset", f"numid={numid}", str(value)]
@@ -206,35 +210,25 @@ def get_audio_formats(bitdepth):
 # RECORDING USING ARECORD
 # ------------------------------------------------------------
 
-def start_arecord(filename, samplerate, bitdepth, card, device):
+def start_arecord(filename, fmt):
     """
     Launch arecord as a subprocess.
     """
-    global arecord_process, hwcaps
+    global ffmpeg_recorder_process
     filepath = RECORDINGS_ROOT + filename
-    # Map bit depth to ALSA format
-    if bitdepth == 16:
-        fmt = "S16_LE"
-    elif bitdepth == 24:
-        fmt = "S24_3LE"
-    else:
-        raise ValueError("Unsupported bit depth")
 
-    channels = hwcaps["channels"] # detect_channel_count(card, device)
-    
-    device_string = f"hw:{card},{device}"
-
-    cmd = [
-        "arecord",
-        "-D", device_string,
-        "-f", fmt,
-        "-r", str(samplerate),
-        "-c", str(channels),
-        str(filepath)
+    # Tap veilig in op de continu lopende HTTP-stream
+    rec_cmd = [
+        "ffmpeg", "-y",
+        "-i", "http://127.0.0",
+        # "-metadata", f"title={title}",
+        # "-metadata", f"artist={artist}",
+        "-f", fmt, filepath
     ]
 
-    print("Starting arecord:", " ".join(cmd))
-    arecord_process = subprocess.Popen(cmd)
+    ffmpeg_recorder_process = subprocess.Popen(rec_cmd, stderr=subprocess.DEVNULL)
+    return jsonify({"status": "success", "message": f"Recording started {fmt.upper()}", "path": filepath})
+
 
 
 def stop_arecord():
@@ -270,17 +264,16 @@ def set_card():
     print("RAW:", repr(hwcaps["raw"]))
 
 def init_continuous_audio_engine(samplerate=44100, bitdepth=16):
-    global arecord_process, ffmpeg_stream_process
+    global arecord_process, ffmpeg_stream_process, card, device
     
     # 1. Map bitdiepte naar ALSA en FFmpeg formats
-    alsa_fmt = "S16_LE" if bitdepth == 16 else "S24_3LE"
-    ffmpeg_fmt = "s16le" if bitdepth == 16 else "s24le"
-    device_string = f"hw:{CARD},{DEVICE}"
+    alsa_fmt, ffmpeg_fmt = get_audio_formats(bitdepth)
+    device_string = f"hw:{card},{device}"
 
     # 2. Arecord vangt pure PCM
     arecord_cmd = [
         "arecord", "-D", device_string, "-f", alsa_fmt,
-        "-r", str(samplerate), "-c", str(CHANNELS), "-t", "raw", "-"
+        "-r", str(samplerate), "-c", str(channels), "-t", "raw", "-"
     ]
     arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE)
 
@@ -288,9 +281,10 @@ def init_continuous_audio_engine(samplerate=44100, bitdepth=16):
     # - Output 1: PipeWire (Pulse) -> Ongecomprimeerd
     # - Output 2: High Quality Monitor -> Stereo AAC op 256 kbps (naar pipe:1 / stdout)
     # - Output 3: Low Bandwidth Monitor -> Mono AAC op 64 kbps (naar pipe:3)
+    channels = hwcaps["channels"] # detect_channel_count(card, device)
     ffmpeg_cmd = [
         "ffmpeg", "-y",
-        "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(CHANNELS),
+        "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
         "-i", "pipe:0",
         "-f", "tee",
         "-map", "0:a",
@@ -299,20 +293,12 @@ def init_continuous_audio_engine(samplerate=44100, bitdepth=16):
         f"[f=mpegts:c:a=aac:b:a=64k:ac=1]pipe:3" # :ac=1 forceert downmix naar mono voor extra besparing
     ]
     
-    # Pass 'pass_fds=[3]' mee zodat Python toestaat dat FFmpeg file descriptor 3 gebruikt
     ffmpeg_stream_process = subprocess.Popen(
         ffmpeg_cmd, 
         stdin=arecord_process.stdout, 
         stdout=subprocess.PIPE,
-        pass_fds=[3],
         stderr=subprocess.DEVNULL
     )
-    
-    # Open de extra descriptor 3 in Python om de low-bandwidth stream uit te lezen
-    # In een Docker Debian omgeving linkt fd 3 direct naar /proc/self/fd/3
-    import os
-    global low_bandwidth_fd
-    low_bandwidth_fd = os.fdopen(3, 'rb')
 
     print("🚀 Dual-Bandbreedte Audio Engine actief.")
 
@@ -353,12 +339,24 @@ def index():
 def api_status():
     return jsonify({"recording": arecord_process is not None})
 
+@app.route('/stream.ts')
+def stream_audio():
+    """Live monitor endpoint voor de browser (ondersteunt meerdere luisteraars)."""
+    def generate():
+        global ffmpeg_stream_process
+        if ffmpeg_stream_process and ffmpeg_stream_process.stdout:
+            while True:
+                chunk = ffmpeg_stream_process.stdout.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+    return Response(generate(), mimetype='audio/mp4')
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
-    global arecord_process, card, device, name
+    global ffmpeg_recorder_process, card, device, name
 
-    if arecord_process is not None:
+    if ffmpeg_recorder_process and ffmpeg_recorder_process.poll() is None:
         return jsonify({"error": "Already recording"}), 400
 
     data = request.json
@@ -369,45 +367,51 @@ def api_start():
 
     samplerate = int(data.get("samplerate", 44100))
     bitdepth = int(data.get("bitdepth", 16))
-
+    fmt = data.get("filename", "").lower()
+    if fmt not in ['wav', 'aiff']:
+        fmt = 'aif'
+        
     if card is None:
         return jsonify({"error": "No capture card found"}), 400
 
-    start_arecord(filename, samplerate, bitdepth, card, device)
+    start_arecord(filename, fmt)
 
     return jsonify({"status": "recording", "filename": filename})
 
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
-    stop_arecord()
-    return jsonify({"status": "stopped"})
+    global ffmpeg_recorder_process
+    if ffmpeg_recorder_process:
+        ffmpeg_recorder_process.terminate()
+        ffmpeg_recorder_process.wait()
+        return jsonify({"status": "success", "message": "Recording saved"})
+    return jsonify({"status": "error", "message": "No active recording found"}), 400
+
 
 
 @app.route("/api/input", methods=["GET"])
 def api_get_input():
-    card, device, name = detect_capture_card()
+    global card, device, name, selector_numid, input_source
     if card is None:
         return jsonify({"error": "no capture card"}), 400
 
-    numid = detect_input_selector(card)
-    if numid is None:
+    if selector_numid is None:
         return jsonify({"source": None, "supported": False})
 
     return jsonify({
-        "source": get_input_source(card, numid),
+        "source": input_source,
         "supported": True
     })
 
 
 @app.route("/api/input", methods=["POST"])
 def api_set_input():
-    card, device, name = detect_capture_card()
+    global card, device, name, selector_numid
     if card is None:
         return jsonify({"error": "no capture card"}), 400
 
-    numid = detect_input_selector(card)
-    if numid is None:
+    if selector_numid is None:
         return jsonify({"error": "input selector not supported"}), 400
 
     data = request.json
@@ -415,7 +419,7 @@ def api_set_input():
     if source not in ["Line", "IEC958 In"]:
         return jsonify({"error": "invalid source"}), 400
 
-    set_input_source(card, numid, source)
+    set_input_source(card, selector_numid, source)
     return jsonify({"status": "ok", "source": source})
 
 @app.route("/api/caps")

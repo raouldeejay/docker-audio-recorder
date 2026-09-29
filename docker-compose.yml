@@ -9,10 +9,16 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./recordings:/app/recordings
+      - /mnt/data/audio-recorder:/app/recordings
+      - /proc/asound:/mnt/asound:ro
+      - /run/user/1000/pulse:/run/user/1000/pulse
+    group_add:
+      - audio
     devices:
       - /dev/snd:/dev/snd  # Grant access to audio
     environment:
       - FLASK_ENV=production
       - AUDIO_DEVICE=default  # Can be changed to specific device
+      - PULSE_SERVER=unix:/run/user/1000/pulse/
     privileged: false
+    profiles: [rpi4,rpi5]

@@ -18,6 +18,13 @@ RECORDINGS_ROOT = "/app/recordings/"
 selected_card = None
 selected_device = None
 selected_name = None
+cards = None
+card = None
+device = None
+name = None
+input_source = None
+selector_numid = None
+
 
 hwcaps = {
     "card": None,
@@ -262,13 +269,55 @@ def set_card():
 
     print("RAW:", repr(hwcaps["raw"]))
 
+def init_continuous_audio_engine(samplerate=44100, bitdepth=16):
+    global arecord_process, ffmpeg_stream_process
+    
+    # 1. Map bitdiepte naar ALSA en FFmpeg formats
+    alsa_fmt = "S16_LE" if bitdepth == 16 else "S24_3LE"
+    ffmpeg_fmt = "s16le" if bitdepth == 16 else "s24le"
+    device_string = f"hw:{CARD},{DEVICE}"
 
-# ------------------------------------------------------------
-# FLASK ROUTES
-# ------------------------------------------------------------
+    # 2. Arecord vangt pure PCM
+    arecord_cmd = [
+        "arecord", "-D", device_string, "-f", alsa_fmt,
+        "-r", str(samplerate), "-c", str(CHANNELS), "-t", "raw", "-"
+    ]
+    arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE)
 
-@app.route("/")
-def index():
+    # 3. FFmpeg met 3 parallelle outputs via the TEE-muxer:
+    # - Output 1: PipeWire (Pulse) -> Ongecomprimeerd
+    # - Output 2: High Quality Monitor -> Stereo AAC op 256 kbps (naar pipe:1 / stdout)
+    # - Output 3: Low Bandwidth Monitor -> Mono AAC op 64 kbps (naar pipe:3)
+    ffmpeg_cmd = [
+        "ffmpeg", "-y",
+        "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(CHANNELS),
+        "-i", "pipe:0",
+        "-f", "tee",
+        "-map", "0:a",
+        f"[f=pulse]default|"
+        f"[f=mpegts:c:a=aac:b:a=256k]pipe:1|"
+        f"[f=mpegts:c:a=aac:b:a=64k:ac=1]pipe:3" # :ac=1 forceert downmix naar mono voor extra besparing
+    ]
+    
+    # Pass 'pass_fds=[3]' mee zodat Python toestaat dat FFmpeg file descriptor 3 gebruikt
+    ffmpeg_stream_process = subprocess.Popen(
+        ffmpeg_cmd, 
+        stdin=arecord_process.stdout, 
+        stdout=subprocess.PIPE,
+        pass_fds=[3],
+        stderr=subprocess.DEVNULL
+    )
+    
+    # Open de extra descriptor 3 in Python om de low-bandwidth stream uit te lezen
+    # In een Docker Debian omgeving linkt fd 3 direct naar /proc/self/fd/3
+    import os
+    global low_bandwidth_fd
+    low_bandwidth_fd = os.fdopen(3, 'rb')
+
+    print("🚀 Dual-Bandbreedte Audio Engine actief.")
+
+def init_card():
+    global cards, card, device, name, input_source, selector_numid
     cards = list_capture_cards()
     # init to 1st or selected card
     card, device, name = detect_capture_card()
@@ -281,6 +330,13 @@ def index():
         if selector_numid is not None:
             input_source = get_input_source(card, selector_numid)
 
+# ------------------------------------------------------------
+# FLASK ROUTES
+# ------------------------------------------------------------
+
+@app.route("/")
+def index():
+    
     return render_template(
         "index.html",
         cards=cards,
@@ -300,7 +356,7 @@ def api_status():
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
-    global arecord_process
+    global arecord_process, card, device, name
 
     if arecord_process is not None:
         return jsonify({"error": "Already recording"}), 400
@@ -314,7 +370,6 @@ def api_start():
     samplerate = int(data.get("samplerate", 44100))
     bitdepth = int(data.get("bitdepth", 16))
 
-    card, device, name = detect_capture_card()
     if card is None:
         return jsonify({"error": "No capture card found"}), 400
 
@@ -414,7 +469,7 @@ def api_select_card():
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    
+    init_card()
     # init_continuous_audio_engine(samplerate=44100, bitdepth=16)
         
     app.run(host="0.0.0.0", port=5000)

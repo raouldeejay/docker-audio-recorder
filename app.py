@@ -183,6 +183,17 @@ def generate_filename():
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"recording_{ts}.wav"
 
+def get_audio_formats(bitdepth):
+    if bitdepth == 8:
+        return "U8", "u8"
+    elif bitdepth == 16:
+        return "S16_LE", "s16le"
+    elif bitdepth == 24:
+        return "S24_3LE", "s24le"
+    elif bitdepth == 32:
+        return "S32_LE", "s32le"
+    else:
+        raise ValueError(f"Unsupported bit depth: {bitdepth}")
 
 # ------------------------------------------------------------
 # RECORDING USING ARECORD

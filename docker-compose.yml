@@ -5,6 +5,7 @@ services:
       context: https://github.com/raouldeejay/docker-audio-recorder.git
       dockerfile: Dockerfile
     container_name: docker-audio-recorder
+    restart: unless-stopped
     ports:
       - "5000:5000"
     volumes:

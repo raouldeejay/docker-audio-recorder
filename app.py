@@ -427,6 +427,8 @@ def api_stop():
     if ffmpeg_recorder_process:
         ffmpeg_recorder_process.terminate()
         ffmpeg_recorder_process.wait()
+        # hard set to none
+        ffmpeg_recorder_process = None
         return jsonify({"status": "success", "message": "Recording saved"})
     return jsonify({"status": "error", "message": "No active recording found"}), 400
 

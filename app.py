@@ -239,7 +239,7 @@ def start_arecord(filename, fmt):
         # "-metadata", f"artist={artist}",
         "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
         # "-f", "nut",                  # Tells ffmpeg the incoming network packets use the nut format
-        "-i", UDP_REC_URL,
+        "-i", FIFO_PATH,
         "-c:a", pcm_encoder,  # Encodes losslessly into PCM space
         filepath
     ]
@@ -278,10 +278,18 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
     
     # 2. Arecord vangt pure PCM
     arecord_cmd = [
-        "arecord", "-D", device_string, "-f", alsa_fmt,
-        "-r", str(samplerate), "-c", str(channels), "-t", "raw", "-"
+        f"arecord -D {device_string} -f {alsa_fmt} -r {samplerate} -c {channels} -t raw - | "
+        f"python3 -c \"import os, sys; fd = os.open('{FIFO_PATH}', os.O_WRONLY | os.O_NONBLOCK); "
+        f"sys.stdout = os.fdopen(sys.stdout.fileno(), 'wb'); "
+        f"buf = sys.stdin.buffer; "
+        f"while True: "
+        f"  chunk = buf.read(4096); "
+        f"  if not chunk: break; "
+        f"  sys.stdout.write(chunk); sys.stdout.flush(); "
+        f"  try: os.write(fd, chunk) "
+        f"  except OSError: pass\""
     ]
-    arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE)
+    arecord_process = subprocess.Popen(arecord_cmd, shell=True, stdout=subprocess.PIPE)
 
     # 3. FFmpeg met 3 parallelle outputs via the TEE-muxer:
     # - Output 1: PipeWire (Pulse) -> Ongecomprimeerd
@@ -295,7 +303,7 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-map", "0:a",
         #f"[f=nut:c:a=copy]{UDP_REC_URL}?pkt_size=1316|"  
         #f"[f=mpegts:c:a=pcm_{ffmpeg_fmt}]{UDP_REC_URL}?pkt_size=1316|"       # <-- Lossless Bit-Perfect Network Loop
-        f"[f={ffmpeg_fmt}]{UDP_REC_URL}?pkt_size=1024|" # <-- Multicast Raw PCM Tap
+        # f"[f={ffmpeg_fmt}]{UDP_REC_URL}?pkt_size=1024|" # <-- Multicast Raw PCM Tap
         # f"[f=mpegts]{UDP_REC_URL}?pkt_size=1316|"             # Lossless UDP target split
         # f"[f=fifo:fifo_format={ffmpeg_fmt}:ar={samplerate}:ac={channels}:drop_pkts_on_overflow=1:attempt_recovery=1]{FIFO_PATH}|" # <-- Safe Async Lossless Tap
         # f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{FIFO_PATH}?timeout=0|"

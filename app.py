@@ -405,7 +405,7 @@ def api_start():
         samplerate = int(data.get("samplerate", 48000))
         bitdepth = int(data.get("bitdepth", 16))
         stop_continuous_audio_engine()
-
+        init_continuous_audio_engine(bitdepth, samplerate)
     fmt = data.get("filename", "").lower()
     if fmt not in ['wav', 'aiff']:
         fmt = 'aif'

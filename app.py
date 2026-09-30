@@ -278,7 +278,7 @@ def start_arecord(filename, fmt):
         filepath  # Extension auto-detected cleanly (.wav / .aif)
     ]
 
-    ffmpeg_recorder_process = subprocess.Popen(rec_cmd, stdout=subprocess.DEVNULL, stderr=DEVNULL)
+    ffmpeg_recorder_process = subprocess.Popen(rec_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return jsonify({"status": "success", "message": f"Recording started {fmt.upper()}", "path": filepath})
 
 def set_card():

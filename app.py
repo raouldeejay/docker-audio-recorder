@@ -291,7 +291,8 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-f", "tee",
         "-map", "0:a",
         # 1. Uncompressed Lossless Tap for dynamic recording
-        f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{FIFO_PATH}?timeout=0|"
+        f"[f=fifo:fifo_format={ffmpeg_fmt}:drop_pkts_on_overflow=1:attempt_recovery=1]{FIFO_PATH}|" # <-- Safe Async Lossless Tap
+        # f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{FIFO_PATH}?timeout=0|"
         f"[f=pulse]default|"
         f"[f=adts:c:a=aac:b:a=512k]http://127.0.0.1:8081?listen=1|"
         f"[f=adts:c:a=aac:b:a=256k:ac=1]http://127.0.0.1:8082?listen=1" # :ac=1 forceert downmix naar mono voor extra besparing

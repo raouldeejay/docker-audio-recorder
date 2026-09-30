@@ -12,18 +12,22 @@ from flask import Flask, render_template, request, jsonify, Response
 app = Flask(__name__)
 
 # Global recorder process
-cards = []
 arecord_process = None
 ffmpeg_stream_process = None
 ffmpeg_recorder_process = None
+low_bandwidth_fd = None
 
 RECORDINGS_ROOT = "/app/recordings/"
+
+cards = []
 selected_card = None
 selected_device = None
 selected_name = None
 card = None
 device = None
 name = None
+bitdepth = None
+samplerate = None
 input_source = None
 selector_numid = None
 
@@ -229,23 +233,6 @@ def start_arecord(filename, fmt):
     ffmpeg_recorder_process = subprocess.Popen(rec_cmd, stderr=subprocess.DEVNULL)
     return jsonify({"status": "success", "message": f"Recording started {fmt.upper()}", "path": filepath})
 
-
-
-def stop_arecord():
-    """
-    Stop the arecord subprocess cleanly.
-    """
-    global arecord_process
-
-    if arecord_process is not None:
-        arecord_process.terminate()
-        try:
-            arecord_process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            arecord_process.kill()
-
-        arecord_process = None
-
 def set_card():
     global selected_card, selected_device, selected_name, hwcaps
     # Cache raw hw params ONCE
@@ -263,8 +250,10 @@ def set_card():
 
     print("RAW:", repr(hwcaps["raw"]))
 
-def init_continuous_audio_engine(samplerate=44100, bitdepth=16):
-    global arecord_process, ffmpeg_stream_process, card, device
+def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
+    global arecord_process, ffmpeg_stream_process, card, device, samplerate, bitdepth
+    samplerate = _samplerate
+    bitdepth = _bitdepth
     
     # 1. Map bitdiepte naar ALSA en FFmpeg formats
     alsa_fmt, ffmpeg_fmt = get_audio_formats(bitdepth)
@@ -297,10 +286,45 @@ def init_continuous_audio_engine(samplerate=44100, bitdepth=16):
         ffmpeg_cmd, 
         stdin=arecord_process.stdout, 
         stdout=subprocess.PIPE,
+        pass_fds=[3]
         stderr=subprocess.DEVNULL
     )
 
+    # Open de extra descriptor 3 in Python om de low-bandwidth stream uit te lezen
+    # In een Docker Debian omgeving linkt fd 3 direct naar /proc/self/fd/3
+    global low_bandwidth_fd
+    low_bandwidth_fd = os.fdopen(3, 'rb')
+
     print("🚀 Dual-Bandbreedte Audio Engine actief.")
+
+def stop_continuous_audio_engine():
+    """Beëindigt de arecord- en FFmpeg-streamprocessen op een elegante manier."""
+    global arecord_process, ffmpeg_stream_process
+    print("Stopping active audio engine components...")
+
+    # Termineer arecord eerst (stopt de toevoer van nieuwe hardware bytes)
+    if arecord_process:
+        try:
+            arecord_process.terminate()
+            arecord_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            arecord_process.kill()
+        arecord_process = None
+
+    # Laat FFmpeg zijn resterende buffers verwerken en sluiten
+    if ffmpeg_stream_process:
+        try:
+            # .communicate() sluit stdin en wacht netjes tot het proces klaar is
+            ffmpeg_stream_process.communicate(timeout=2)
+        except (subprocess.TimeoutExpired, ValueError):
+            ffmpeg_stream_process.kill()
+        ffmpeg_stream_process = None
+
+    if low_bandwidth_fd:            
+        low_bandwidth_fd.communicate(timeout=2)
+        except (subprocess.TimeoutExpired, ValueError):
+            low_bandwidth_fd.kill()
+        low_bandwidth_fd = None
 
 def init_card():
     global cards, card, device, name, input_source, selector_numid
@@ -354,7 +378,7 @@ def stream_audio():
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
-    global ffmpeg_recorder_process, card, device, name
+    global ffmpeg_recorder_process, card, device, name, samplerate, bitdepth
 
     if ffmpeg_recorder_process and ffmpeg_recorder_process.poll() is None:
         return jsonify({"error": "Already recording"}), 400
@@ -364,9 +388,11 @@ def api_start():
     filename = data.get("filename", "").strip()
     if filename == "":
         filename = generate_filename()
+    if (samplerate != int(data.get("samplerate")) or bitdepth != int(data.get("samplerate")))
+        samplerate = int(data.get("samplerate", 48000))
+        bitdepth = int(data.get("bitdepth", 16))
+        stop_continuous_audio_engine()
 
-    samplerate = int(data.get("samplerate", 44100))
-    bitdepth = int(data.get("bitdepth", 16))
     fmt = data.get("filename", "").lower()
     if fmt not in ['wav', 'aiff']:
         fmt = 'aif'
@@ -474,6 +500,6 @@ def api_select_card():
 
 if __name__ == "__main__":
     init_card()
-    # init_continuous_audio_engine(samplerate=44100, bitdepth=16)
+    init_continuous_audio_engine(samplerate=48000, bitdepth=16)
         
     app.run(host="0.0.0.0", port=5000)

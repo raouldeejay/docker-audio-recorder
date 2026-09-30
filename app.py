@@ -279,21 +279,20 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-f", "tee",
         "-map", "0:a",
         f"[f=pulse]default|"
-        f"[f=adts:c:a=aac:b:a=256k]pipe:1|"
-        f"[f=adts:c:a=aac:b:a=64k:ac=1]pipe:3" # :ac=1 forceert downmix naar mono voor extra besparing
+        f"[f=adts:c:a=aac:b:a=256k]http://127.0.0|"
+        f"[f=adts:c:a=aac:b:a=64k:ac=1]http://127.0.0" # :ac=1 forceert downmix naar mono voor extra besparing
     ]
     
     ffmpeg_stream_process = subprocess.Popen(
         ffmpeg_cmd, 
         stdin=arecord_process.stdout, 
         stdout=subprocess.PIPE,
-        pass_fds=[3],
         stderr=subprocess.DEVNULL
     )
 
     # Open de extra descriptor 3 in Python om de low-bandwidth stream uit te lezen
     # In een Docker Debian omgeving linkt fd 3 direct naar /proc/self/fd/3
-    low_bandwidth_fd = os.fdopen(3, 'rb')
+    # low_bandwidth_fd = os.fdopen(3, 'rb')
 
     print("🚀 Dual-Bandbreedte Audio Engine actief.")
 
@@ -320,12 +319,12 @@ def stop_continuous_audio_engine():
             ffmpeg_stream_process.kill()
         ffmpeg_stream_process = None
 
-    if low_bandwidth_fd:
-        try:
-            low_bandwidth_fd.close()
-        except (subprocess.TimeoutExpired, ValueError):
-            low_bandwidth_fd.kill()
-        low_bandwidth_fd = None
+    # if low_bandwidth_fd:
+    #    try:
+    #        low_bandwidth_fd.close()
+    #    except (subprocess.TimeoutExpired, ValueError):
+    #        low_bandwidth_fd.kill()
+    #    low_bandwidth_fd = None
 
 def init_card():
     global cards, card, device, name, input_source, selector_numid
@@ -368,10 +367,11 @@ def api_status():
 def stream_audio():
     """Live monitor endpoint voor de browser (ondersteunt meerdere luisteraars)."""
     def generate():
-        global ffmpeg_stream_process
-        if ffmpeg_stream_process and ffmpeg_stream_process.stdout:
+    
+        with urllib.request.urlopen('http://127.0.0', timeout=5) as stream:
+        # if ffmpeg_stream_process and ffmpeg_stream_process.stdout:
             while True:
-                chunk = ffmpeg_stream_process.stdout.read(4096)
+                chunk = stream.read(4096)
                 if not chunk:
                     break
                 yield chunk
@@ -381,10 +381,11 @@ def stream_audio():
 def low_bandwidth_stream():
     """Lage kwaliteit monitor (Mono, 64 kbps AAC) geoptimaliseerd voor WiFi/4G."""
     def generate():
-        global low_bandwidth_fd
-        if low_bandwidth_fd:
+        # global low_bandwidth_fd
+        # if low_bandwidth_fd:
+        with  urllib.request.urlopen('htyp://127.0.0', timeout=5) as stream:
             while True:
-                chunk = low_bandwidth_fd.read(4096)
+                chunk = stream.read(4096)
                 if not chunk: break
                 yield chunk
     return Response(generate(), mimetype='audio/aac')

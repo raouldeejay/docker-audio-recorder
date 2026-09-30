@@ -251,7 +251,7 @@ def set_card():
     print("RAW:", repr(hwcaps["raw"]))
 
 def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
-    global arecord_process, ffmpeg_stream_process, card, device, samplerate, bitdepth, hwcaps
+    global arecord_process, ffmpeg_stream_process, card, device, samplerate, bitdepth, hwcaps, low_bandwidth_fd
     samplerate = _samplerate
     bitdepth = _bitdepth
     
@@ -293,14 +293,13 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
 
     # Open de extra descriptor 3 in Python om de low-bandwidth stream uit te lezen
     # In een Docker Debian omgeving linkt fd 3 direct naar /proc/self/fd/3
-    global low_bandwidth_fd
     low_bandwidth_fd = os.fdopen(3, 'rb')
 
     print("🚀 Dual-Bandbreedte Audio Engine actief.")
 
 def stop_continuous_audio_engine():
     """Beëindigt de arecord- en FFmpeg-streamprocessen op een elegante manier."""
-    global arecord_process, ffmpeg_stream_process
+    global arecord_process, ffmpeg_stream_process, low_bandwidth_fd
     print("Stopping active audio engine components...")
 
     # Termineer arecord eerst (stopt de toevoer van nieuwe hardware bytes)

@@ -279,8 +279,8 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-f", "tee",
         "-map", "0:a",
         f"[f=pulse]default|"
-        f"[f=adts:c:a=aac:b:a=256k]http://127.0.0.1:8081|"
-        f"[f=adts:c:a=aac:b:a=64k:ac=1]http://127.0.0.1:8082" # :ac=1 forceert downmix naar mono voor extra besparing
+        f"[f=adts:c:a=aac:b:a=512k]http://127.0.0.1:8081|"
+        f"[f=adts:c:a=aac:b:a=256k:ac=1]http://127.0.0.1:8082" # :ac=1 forceert downmix naar mono voor extra besparing
     ]
     
     ffmpeg_stream_process = subprocess.Popen(

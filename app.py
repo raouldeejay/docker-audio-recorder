@@ -237,12 +237,13 @@ def start_arecord(filename, fmt):
         "ffmpeg", "-y",
         # "-metadata", f"title={title}",
         # "-metadata", f"artist={artist}",
-        "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
+        # "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
         "-i", UDP_REC_URL,
         "-c:a", pcm_encoder,  # Encodes losslessly into PCM space
         filepath
     ]
 
+    log_file = open("/tmp/ffmpeg_recorder.log", "w")
     ffmpeg_recorder_process = subprocess.Popen(rec_cmd, stderr=subprocess.DEVNULL)
     return jsonify({"status": "success", "message": f"Recording started {fmt.upper()}", "path": filepath})
 
@@ -291,7 +292,8 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-i", "pipe:0",
         "-f", "tee",
         "-map", "0:a",
-        f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{UDP_REC_URL}?pkt_size=1024|" # <-- Multicast Raw PCM Tap
+        f"[f=mpegts:c:a=pcm_{ffmpeg_fmt}]{UDP_REC_URL}?pkt_size=1316|"       # <-- Lossless Bit-Perfect Network Loop
+        #f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{UDP_REC_URL}?pkt_size=1024|" # <-- Multicast Raw PCM Tap
         # f"[f=mpegts]{UDP_REC_URL}?pkt_size=1316|"             # Lossless UDP target split
         # f"[f=fifo:fifo_format={ffmpeg_fmt}:ar={samplerate}:ac={channels}:drop_pkts_on_overflow=1:attempt_recovery=1]{FIFO_PATH}|" # <-- Safe Async Lossless Tap
         # f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{FIFO_PATH}?timeout=0|"

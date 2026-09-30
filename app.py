@@ -38,6 +38,7 @@ bitdepth = None
 samplerate = None
 input_source = None
 selector_numid = None
+channels = None
 
 
 hwcaps = {
@@ -108,7 +109,7 @@ def detect_capture_card():
 # ------------------------------------------------------------
 def get_hwcaps_non_exclusive(card_index, device_index):
 
-    global hwcaps
+    global hwcaps, channels
     # Paths for device name and streaming capabilities
     id_file = Path(f"/mnt/asound/card{card_index}/id")
     stream_file = Path(f"/mnt/asound/card{card_index}/stream0")

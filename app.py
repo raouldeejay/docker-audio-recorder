@@ -322,7 +322,7 @@ def stop_continuous_audio_engine():
 
     if low_bandwidth_fd:
         try:
-            low_bandwidth_fd.communicate(timeout=2)
+            low_bandwidth_fd.close()
         except (subprocess.TimeoutExpired, ValueError):
             low_bandwidth_fd.kill()
         low_bandwidth_fd = None

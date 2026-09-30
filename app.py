@@ -237,7 +237,7 @@ def start_arecord(filename, fmt):
         "ffmpeg", "-y",
         # "-metadata", f"title={title}",
         # "-metadata", f"artist={artist}",
-        # "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
+        "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
         # "-f", "nut",                  # Tells ffmpeg the incoming network packets use the nut format
         "-i", TCP_REC_URL,
         "-c:a", pcm_encoder,  # Encodes losslessly into PCM space
@@ -305,7 +305,7 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-i", "pipe:0",
         "-f", "tee",
         "-map", "0:a",
-        f"[f=nut:c:a=copy]{TCP_REC_URL}??listen=1&send_buffer_size=65536|"
+        f"[f=rawvideo]{TCP_REC_URL}??listen=1|"
         #f"[f=mpegts:c:a=pcm_{ffmpeg_fmt}]{UDP_REC_URL}?pkt_size=1316|"       # <-- Lossless Bit-Perfect Network Loop
         # f"[f={ffmpeg_fmt}]{UDP_REC_URL}?pkt_size=1024|" # <-- Multicast Raw PCM Tap
         # f"[f=mpegts]{UDP_REC_URL}?pkt_size=1316|"             # Lossless UDP target split

@@ -1,4 +1,4 @@
-ja import os
+import os
 import subprocess
 import re
 import datetime

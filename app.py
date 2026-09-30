@@ -5,7 +5,9 @@ import datetime
 import threading
 import time
 import socket
+
 from pathlib import Path
+from urllib.request import urlopen
 
 from flask import Flask, render_template, request, jsonify, Response
 
@@ -368,7 +370,7 @@ def stream_audio():
     """Live monitor endpoint voor de browser (ondersteunt meerdere luisteraars)."""
     def generate():
     
-        with urllib.request.urlopen('http://127.0.0.1:8081', timeout=5) as stream:
+        with urlopen('http://127.0.0.1:8081', timeout=5) as stream:
         # if ffmpeg_stream_process and ffmpeg_stream_process.stdout:
             while True:
                 chunk = stream.read(4096)
@@ -383,7 +385,7 @@ def low_bandwidth_stream():
     def generate():
         # global low_bandwidth_fd
         # if low_bandwidth_fd:
-        with  urllib.request.urlopen('htyp://127.0.0.1:8082', timeout=5) as stream:
+        with  urlopen('htyp://127.0.0.1:8082', timeout=5) as stream:
             while True:
                 chunk = stream.read(4096)
                 if not chunk: break

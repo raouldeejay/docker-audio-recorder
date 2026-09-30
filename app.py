@@ -20,6 +20,12 @@ ffmpeg_recorder_process = None
 low_bandwidth_fd = None
 
 RECORDINGS_ROOT = "/app/recordings/"
+FIFO_PATH = "/tmp/audio_rec.fifo"
+
+# Ensure directories and pipes are initialized immediately on boot
+Path(RECORDINGS_ROOT).mkdir(parents=True, exist_ok=True)
+if not os.path.exists(FIFO_PATH):
+    os.mkfifo(FIFO_PATH)
 
 cards = []
 selected_card = None
@@ -220,15 +226,18 @@ def start_arecord(filename, fmt):
     """
     Launch arecord as a subprocess.
     """
-    global ffmpeg_recorder_process
-    filepath = RECORDINGS_ROOT + filename
-
+    global ffmpeg_recorder_process, samplerate, channels
+    filepath = os.path.join(RECORDINGS_ROOT, filename)
+    _, ffmpeg_fmt = get_audio_formats(bitdepth)
+    pcm_encoder = f"pcm_{ffmpeg_fmt}"
     # Tap veilig in op de continu lopende HTTP-stream
     rec_cmd = [
         "ffmpeg", "-y",
-        "-i", "http://127.0.0",
         # "-metadata", f"title={title}",
         # "-metadata", f"artist={artist}",
+        "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
+        "-i", FIFO_PATH,
+        "-c:a", pcm_encoder,  # Encodes losslessly into PCM space
         "-f", fmt, filepath
     ]
 
@@ -280,9 +289,11 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-i", "pipe:0",
         "-f", "tee",
         "-map", "0:a",
+        # 1. Uncompressed Lossless Tap for dynamic recording
+        f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{FIFO_PATH}?timeout=0|"
         f"[f=pulse]default|"
-        f"[f=adts:c:a=aac:b:a=512k]http://127.0.0.1:8081|"
-        f"[f=adts:c:a=aac:b:a=256k:ac=1]http://127.0.0.1:8082" # :ac=1 forceert downmix naar mono voor extra besparing
+        f"[f=adts:c:a=aac:b:a=512k]http://127.0.0.1:8081?listen=1|"
+        f"[f=adts:c:a=aac:b:a=256k:ac=1]http://127.0.0.1:8082?listen=1" # :ac=1 forceert downmix naar mono voor extra besparing
     ]
     
     ffmpeg_stream_process = subprocess.Popen(
@@ -425,12 +436,13 @@ def api_start():
 def api_stop():
     global ffmpeg_recorder_process
     if ffmpeg_recorder_process:
-        ffmpeg_recorder_process.terminate()
-        ffmpeg_recorder_process.wait()
-        # hard set to none
-        ffmpeg_recorder_process = None
-        return jsonify({"status": "success", "message": "Recording saved"})
-    return jsonify({"status": "error", "message": "No active recording found"}), 400
+        return jsonify({"status": "error", "message": "No active recording found"}), 400
+    
+    ffmpeg_recorder_process.terminate()
+    ffmpeg_recorder_process.wait()
+    # hard set to none
+    ffmpeg_recorder_process = None
+    return jsonify({"status": "success", "message": "Recording saved"})
 
 
 

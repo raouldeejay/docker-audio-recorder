@@ -320,8 +320,9 @@ def stop_continuous_audio_engine():
             ffmpeg_stream_process.kill()
         ffmpeg_stream_process = None
 
-    if low_bandwidth_fd:            
-        low_bandwidth_fd.communicate(timeout=2)
+    if low_bandwidth_fd:
+        try:
+            low_bandwidth_fd.communicate(timeout=2)
         except (subprocess.TimeoutExpired, ValueError):
             low_bandwidth_fd.kill()
         low_bandwidth_fd = None

@@ -196,7 +196,7 @@ def set_input_source(card, numid, source):
 
 def generate_filename():
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"recording_{ts}.wav"
+    return f"recording_{ts}.aiff"
 
 def get_audio_formats(bitdepth):
     if bitdepth == 8:
@@ -407,7 +407,7 @@ def api_start():
         bitdepth = int(data.get("bitdepth", 16))
         stop_continuous_audio_engine()
         init_continuous_audio_engine(samplerate, bitdepth)
-    fmt = data.get("filename", "").lower()
+    fmt = Path(data.get("filename", "").lower()).suffix
     if fmt not in ['wav', 'aiff']:
         fmt = 'aif'
         

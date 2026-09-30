@@ -194,7 +194,16 @@
         <button id="stopBtn" onclick="stopRecording()" disabled>Stop</button>
 
     </div>
+    
+    <div class="section">
+        <audio id="audioMonitor" autoplay></audio>
+        
+        <!-- Schakel tussen High Quality en Low Bandwidth -->
+        <button onclick="setQuality('/stream.ts')">Studio Kwaliteit (LAN)</button>
+        <button onclick="setQuality('/low_stream.ts')">Besparingsmodus (WiFi)</button>
 
+    </div>
+    
 </div>
 
 <script>
@@ -379,6 +388,13 @@ window.onload = function() {
     pollStatus();
     setInterval(pollStatus, 1000);
 };
+
+function setQuality(endpoint) {
+    const player = document.getElementById('audioMonitor');
+    player.src = `${endpoint}?t=${new Date().getTime()}`;
+    player.load();
+    player.play().catch(e => console.log("Afspelen mislukt:", e));
+}
 </script>
 
 </body>

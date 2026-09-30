@@ -436,13 +436,22 @@ def api_start():
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
     global ffmpeg_recorder_process
-    if ffmpeg_recorder_process:
+    
+    # FIX: Corrected condition to check if process is missing or dead
+    if not ffmpeg_recorder_process or ffmpeg_recorder_process.poll() is not None:
         return jsonify({"status": "error", "message": "No active recording found"}), 400
     
-    ffmpeg_recorder_process.terminate()
-    ffmpeg_recorder_process.wait()
-    # hard set to none
-    ffmpeg_recorder_process = None
+    try:
+        # Gracefully signal FFmpeg to flush PCM buffers and finalize header chunks (RIFF/AIFF)
+        ffmpeg_recorder_process.terminate()
+        ffmpeg_recorder_process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        # Fallback security if process deadlocks on pipe closure
+        ffmpeg_recorder_process.kill()
+        ffmpeg_recorder_process.wait()
+    finally:
+        ffmpeg_recorder_process = None
+        
     return jsonify({"status": "success", "message": "Recording saved"})
 
 

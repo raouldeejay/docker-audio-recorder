@@ -378,8 +378,6 @@ def stream_audio():
                 yield chunk
     return Response(generate(), mimetype='audio/aac')
 
-mp4')
-
 @app.route('/low_stream.aac')
 def low_bandwidth_stream():
     """Lage kwaliteit monitor (Mono, 64 kbps AAC) geoptimaliseerd voor WiFi/4G."""

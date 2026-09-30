@@ -1,4 +1,4 @@
-import os
+ja import os
 import subprocess
 import re
 import datetime
@@ -279,8 +279,8 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-f", "tee",
         "-map", "0:a",
         f"[f=pulse]default|"
-        f"[f=adts:c:a=aac:b:a=256k]http://127.0.0|"
-        f"[f=adts:c:a=aac:b:a=64k:ac=1]http://127.0.0" # :ac=1 forceert downmix naar mono voor extra besparing
+        f"[f=adts:c:a=aac:b:a=256k]http://127.0.0.1:8081|"
+        f"[f=adts:c:a=aac:b:a=64k:ac=1]http://127.0.0.1:8082" # :ac=1 forceert downmix naar mono voor extra besparing
     ]
     
     ffmpeg_stream_process = subprocess.Popen(
@@ -368,7 +368,7 @@ def stream_audio():
     """Live monitor endpoint voor de browser (ondersteunt meerdere luisteraars)."""
     def generate():
     
-        with urllib.request.urlopen('http://127.0.0', timeout=5) as stream:
+        with urllib.request.urlopen('http://127.0.0.1:8081', timeout=5) as stream:
         # if ffmpeg_stream_process and ffmpeg_stream_process.stdout:
             while True:
                 chunk = stream.read(4096)
@@ -383,7 +383,7 @@ def low_bandwidth_stream():
     def generate():
         # global low_bandwidth_fd
         # if low_bandwidth_fd:
-        with  urllib.request.urlopen('htyp://127.0.0', timeout=5) as stream:
+        with  urllib.request.urlopen('htyp://127.0.0.1:8082', timeout=5) as stream:
             while True:
                 chunk = stream.read(4096)
                 if not chunk: break

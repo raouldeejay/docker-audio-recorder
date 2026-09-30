@@ -270,27 +270,31 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
     samplerate = _samplerate
     bitdepth = _bitdepth
     
-    # 1. Map bitdiepte naar ALSA en FFmpeg formats
     alsa_fmt, ffmpeg_fmt = get_audio_formats(bitdepth)
     device_string = f"hw:{card},{device}"
 
     channels = hwcaps["channels"] # detect_channel_count(card, device)
     
-    # 2. Arecord vangt pure PCM
+    # 1. arecord captures pristine raw PCM data
     arecord_cmd = [
-        f"arecord -D {device_string} -f {alsa_fmt} -r {samplerate} -c {channels} -t raw - | "
-        f"python3 -c \"import os, sys; fd = os.open('{FIFO_PATH}', os.O_WRONLY | os.O_NONBLOCK); "
-        f"sys.stdout = os.fdopen(sys.stdout.fileno(), 'wb'); "
-        f"buf = sys.stdin.buffer; "
-        f"while True: "
-        f"  chunk = buf.read(4096); "
-        f"  if not chunk: break; "
-        f"  sys.stdout.write(chunk); sys.stdout.flush(); "
-        f"  try: os.write(fd, chunk) "
-        f"  except OSError: pass\""
+        "arecord", "-D", device_string, "-f", alsa_fmt,
+        "-r", str(samplerate), "-c", str(channels), "-t", "raw", "-"
     ]
-    arecord_process = subprocess.Popen(arecord_cmd, shell=True, stdout=subprocess.PIPE)
+    arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE)
 
+    # 2. socat splits arecord's stdout into TWO clean pathways natively:
+    #    Pathway A: Standard Output (pipe:1) -> Feeds the monitoring ffmpeg process
+    #    Pathway B: Non-blocking FIFO writer -> Drops data automatically unless a recorder is attached
+    socat_cmd = [
+        "socat", "-", 
+        f"GOPEN:{FIFO_PATH},nonblock!!STDOUT"
+    ]
+    socat_process = subprocess.Popen(
+        socat_cmd, 
+        stdin=arecord_process.stdout, 
+        stdout=subprocess.PIPE
+    )
+    
     # 3. FFmpeg met 3 parallelle outputs via the TEE-muxer:
     # - Output 1: PipeWire (Pulse) -> Ongecomprimeerd
     # - Output 2: High Quality Monitor -> Stereo AAC op 256 kbps (naar pipe:1 / stdout)
@@ -314,7 +318,7 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
     
     ffmpeg_stream_process = subprocess.Popen(
         ffmpeg_cmd, 
-        stdin=arecord_process.stdout, 
+        stdin=socat_process.stdout, 
         # stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL
     )

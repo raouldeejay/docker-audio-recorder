@@ -363,7 +363,7 @@ def index():
 
 @app.route("/api/status")
 def api_status():
-    return jsonify({"recording": arecord_process is not None})
+    return jsonify({"recording": ffmpeg_recorder_process is not None})
 
 @app.route('/stream.ts')
 def stream_audio():

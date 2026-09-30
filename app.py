@@ -232,6 +232,18 @@ def start_arecord(filename, fmt):
     filepath = os.path.join(RECORDINGS_ROOT, filename)
     _, ffmpeg_fmt = get_audio_formats(bitdepth)
     pcm_encoder = f"pcm_{ffmpeg_fmt}"
+
+# 1. WAIT FOR MAIN ENGINE: Verify if port 9999 is actually listening before proceeding
+    port_ready = False
+    for _ in range(15):  # Try for up to 3 seconds (15 * 0.2s)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            if s.connect_ex(("127.0.0.1", 9999)) == 0:
+                port_ready = True
+                break
+        time.sleep(0.2)
+
+    
     # Tap veilig in op de continu lopende HTTP-stream
     rec_cmd = [
         "ffmpeg", "-y",

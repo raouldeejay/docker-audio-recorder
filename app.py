@@ -286,7 +286,7 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         ffmpeg_cmd, 
         stdin=arecord_process.stdout, 
         stdout=subprocess.PIPE,
-        pass_fds=[3]
+        pass_fds=[3],
         stderr=subprocess.DEVNULL
     )
 

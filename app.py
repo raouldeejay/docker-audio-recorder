@@ -251,7 +251,7 @@ def set_card():
     print("RAW:", repr(hwcaps["raw"]))
 
 def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
-    global arecord_process, ffmpeg_stream_process, card, device, samplerate, bitdepth
+    global arecord_process, ffmpeg_stream_process, card, device, samplerate, bitdepth, hwcaps
     samplerate = _samplerate
     bitdepth = _bitdepth
     
@@ -259,6 +259,8 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
     alsa_fmt, ffmpeg_fmt = get_audio_formats(bitdepth)
     device_string = f"hw:{card},{device}"
 
+    channels = hwcaps["channels"] # detect_channel_count(card, device)
+    
     # 2. Arecord vangt pure PCM
     arecord_cmd = [
         "arecord", "-D", device_string, "-f", alsa_fmt,
@@ -270,7 +272,6 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
     # - Output 1: PipeWire (Pulse) -> Ongecomprimeerd
     # - Output 2: High Quality Monitor -> Stereo AAC op 256 kbps (naar pipe:1 / stdout)
     # - Output 3: Low Bandwidth Monitor -> Mono AAC op 64 kbps (naar pipe:3)
-    channels = hwcaps["channels"] # detect_channel_count(card, device)
     ffmpeg_cmd = [
         "ffmpeg", "-y",
         "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),

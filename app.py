@@ -279,8 +279,8 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-f", "tee",
         "-map", "0:a",
         f"[f=pulse]default|"
-        f"[f=mpegts:c:a=aac:b:a=256k]pipe:1|"
-        f"[f=mpegts:c:a=aac:b:a=64k:ac=1]pipe:3" # :ac=1 forceert downmix naar mono voor extra besparing
+        f"[f=adts:c:a=aac:b:a=256k]pipe:1|"
+        f"[f=adts:c:a=aac:b:a=64k:ac=1]pipe:3" # :ac=1 forceert downmix naar mono voor extra besparing
     ]
     
     ffmpeg_stream_process = subprocess.Popen(
@@ -365,7 +365,7 @@ def index():
 def api_status():
     return jsonify({"recording": ffmpeg_recorder_process is not None})
 
-@app.route('/stream.ts')
+@app.route('/stream.aac')
 def stream_audio():
     """Live monitor endpoint voor de browser (ondersteunt meerdere luisteraars)."""
     def generate():
@@ -376,7 +376,21 @@ def stream_audio():
                 if not chunk:
                     break
                 yield chunk
-    return Response(generate(), mimetype='audio/mp4')
+    return Response(generate(), mimetype='audio/aac')
+
+mp4')
+
+@app.route('/low_stream.aac')
+def low_bandwidth_stream():
+    """Lage kwaliteit monitor (Mono, 64 kbps AAC) geoptimaliseerd voor WiFi/4G."""
+    def generate():
+        global low_bandwidth_fd
+        if low_bandwidth_fd:
+            while True:
+                chunk = low_bandwidth_fd.read(4096)
+                if not chunk: break
+                yield chunk
+    return Response(generate(), mimetype='audio/aac')
 
 @app.route("/api/start", methods=["POST"])
 def api_start():

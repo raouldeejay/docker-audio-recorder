@@ -501,6 +501,6 @@ def api_select_card():
 
 if __name__ == "__main__":
     init_card()
-    init_continuous_audio_engine(samplerate=48000, bitdepth=16)
+    init_continuous_audio_engine(48000, 16)
         
     app.run(host="0.0.0.0", port=5000)

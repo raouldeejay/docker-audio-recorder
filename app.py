@@ -54,6 +54,37 @@ hwcaps = {
 
 HOSTNAME = socket.gethostname()
 
+# State management for background cleanup loop
+is_recording = False
+# ------------------------------------------------------------
+# BACKGROUND FIFO MAINTENANCE CONTEXT
+# ------------------------------------------------------------
+def _fifo_drain_loop():
+    """
+    Prevents the continuous stream from locking up when no recording is active.
+    Opens the FIFO pipe and reads data out into the ether when is_recording is False.
+    """
+    global is_recording
+    while True:
+        try:
+            # Open FIFO read-only. This blocks until a writer connects (main engine)
+            with open(FIFO_REC_PATH, "rb") as f:
+                while True:
+                    if not is_recording:
+                        # Flush bytes out to prevent system memory lockups
+                        chunk = f.read(4096)
+                        if not chunk:
+                            break
+                    else:
+                        # When a recording starts, release this file descriptor loop completely
+                        time.sleep(0.1)
+        except Exception:
+            time.sleep(1)
+
+# Start background maintenance loop thread immediately on initialization
+drain_thread = threading.Thread(target=_fifo_drain_loop, daemon=True)
+drain_thread.start()
+
 # ------------------------------------------------------------
 # ALSA CARD DETECTION
 # ------------------------------------------------------------
@@ -228,36 +259,26 @@ def start_arecord(filename, fmt):
     """
     Launch arecord as a subprocess.
     """
-    global ffmpeg_recorder_process, samplerate, channels
+    global ffmpeg_recorder_process, samplerate, channels, is_recording
     filepath = os.path.join(RECORDINGS_ROOT, filename)
     _, ffmpeg_fmt = get_audio_formats(bitdepth)
     pcm_encoder = f"pcm_{ffmpeg_fmt}"
 
-# 1. WAIT FOR MAIN ENGINE: Verify if port 9999 is actually listening before proceeding
-    port_ready = False
-    for _ in range(15):  # Try for up to 3 seconds (15 * 0.2s)
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.2)
-            if s.connect_ex(("127.0.0.1", 9999)) == 0:
-                port_ready = True
-                break
-        time.sleep(0.2)
+    # Signal maintenance drain thread to pause processing loopback lines
+    is_recording = True
+    time.sleep(0.05)
 
     
-    # Tap veilig in op de continu lopende HTTP-stream
+    # Instruct dynamic recorder process to catch uncompressed data directly off the pipe
     rec_cmd = [
         "ffmpeg", "-y",
-        # "-metadata", f"title={title}",
-        # "-metadata", f"artist={artist}",
         "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
-        # "-f", "nut",                  # Tells ffmpeg the incoming network packets use the nut format
-        "-i", TCP_REC_URL,
-        "-c:a", pcm_encoder,  # Encodes losslessly into PCM space
-        filepath
+        "-i", FIFO_PATH,
+        "-c:a", pcm_encoder,
+        filepath  # Extension auto-detected cleanly (.wav / .aif)
     ]
 
-    log_file = open("/tmp/ffmpeg_recorder.log", "w")
-    ffmpeg_recorder_process = subprocess.Popen(rec_cmd, stdout=subprocess.DEVNULL, stderr=None)
+    ffmpeg_recorder_process = subprocess.Popen(rec_cmd, stdout=subprocess.DEVNULL, stderr=DEVNULL)
     return jsonify({"status": "success", "message": f"Recording started {fmt.upper()}", "path": filepath})
 
 def set_card():
@@ -286,6 +307,12 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
     device_string = f"hw:{card},{device}"
 
     channels = hwcaps["channels"] # detect_channel_count(card, device)
+
+    # Clean termination sequence for active hot-swap requests
+    for proc in [ffmpeg_stream_process, arecord_process]:
+        if proc and proc.poll() is None:
+            proc.terminate()
+            proc.wait()
     
     # 1. arecord captures pristine raw PCM data
     arecord_cmd = [
@@ -294,50 +321,26 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
     ]
     arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE)
 
-    # 2. socat splits arecord's stdout into TWO clean pathways natively:
-    #    Pathway A: Standard Output (pipe:1) -> Feeds the monitoring ffmpeg process
-    #    Pathway B: Non-blocking FIFO writer -> Drops data automatically unless a recorder is attached
-    socat_cmd = [
-        "socat", "-", 
-        f"GOPEN:{FIFO_PATH},nonblock!!STDOUT"
-    ]
-    socat_process = subprocess.Popen(
-        socat_cmd, 
-        stdin=arecord_process.stdout, 
-        stdout=subprocess.PIPE
-    )
-    
-    # 3. FFmpeg met 3 parallelle outputs via the TEE-muxer:
-    # - Output 1: PipeWire (Pulse) -> Ongecomprimeerd
-    # - Output 2: High Quality Monitor -> Stereo AAC op 256 kbps (naar pipe:1 / stdout)
-    # - Output 3: Low Bandwidth Monitor -> Mono AAC op 64 kbps (naar pipe:3)
+    # 2. Duplicate streams. We route raw PCM directly to a dedicated local FIFO pipe.
+    # Because our background maintenance thread drains it, this never blocks monitor channels.
     ffmpeg_cmd = [
         "ffmpeg", "-y",
         "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
         "-i", "pipe:0",
         "-f", "tee",
         "-map", "0:a",
-        f"[f=rawvideo]{TCP_REC_URL}??listen=1|"
-        #f"[f=mpegts:c:a=pcm_{ffmpeg_fmt}]{UDP_REC_URL}?pkt_size=1316|"       # <-- Lossless Bit-Perfect Network Loop
-        # f"[f={ffmpeg_fmt}]{UDP_REC_URL}?pkt_size=1024|" # <-- Multicast Raw PCM Tap
-        # f"[f=mpegts]{UDP_REC_URL}?pkt_size=1316|"             # Lossless UDP target split
-        # f"[f=fifo:fifo_format={ffmpeg_fmt}:ar={samplerate}:ac={channels}:drop_pkts_on_overflow=1:attempt_recovery=1]{FIFO_PATH}|" # <-- Safe Async Lossless Tap
-        # f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{FIFO_PATH}?timeout=0|"
-        f"[f=pulse]default|"
-        f"[f=adts:c:a=aac:b:a=512k]http://127.0.0.1:8081?listen=1|"
-        f"[f=adts:c:a=aac:b:a=256k:ac=1]http://127.0.0.1:8082?listen=1" # :ac=1 forceert downmix naar mono voor extra besparing
+        f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{FIFO_PATH}|"  # <-- True uncompressed bit-perfect tap
+        f"[f=pulse]default|"                                                # PipeWire Client Monitor
+        f"[f=adts:c:a=aac:b:a=256k]http://127.0.0.1:8081|"                 # High Quality Web Monitor
+        f"[f=adts:c:a=aac:b:a=64k:ac=1]http://127.0.0.1:8082"              # Low Quality Web Monitor
     ]
     
     ffmpeg_stream_process = subprocess.Popen(
         ffmpeg_cmd, 
-        stdin=socat_process.stdout, 
-        # stdout=subprocess.PIPE,
+        stdin=arecord_process.stdout,
         stderr=subprocess.DEVNULL
     )
 
-    # Open de extra descriptor 3 in Python om de low-bandwidth stream uit te lezen
-    # In een Docker Debian omgeving linkt fd 3 direct naar /proc/self/fd/3
-    # low_bandwidth_fd = os.fdopen(3, 'rb')
 
     print("🚀 Dual-Bandbreedte Audio Engine actief.")
 
@@ -482,7 +485,7 @@ def api_stop():
         ffmpeg_recorder_process.wait()
     finally:
         ffmpeg_recorder_process = None
-        
+        is_recording = False
     return jsonify({"status": "success", "message": "Recording saved"})
 
 

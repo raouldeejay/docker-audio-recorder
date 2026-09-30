@@ -389,7 +389,7 @@ def api_start():
     filename = data.get("filename", "").strip()
     if filename == "":
         filename = generate_filename()
-    if (samplerate != int(data.get("samplerate")) or bitdepth != int(data.get("samplerate")))
+    if (samplerate != int(data.get("samplerate")) or bitdepth != int(data.get("samplerate"))):
         samplerate = int(data.get("samplerate", 48000))
         bitdepth = int(data.get("bitdepth", 16))
         stop_continuous_audio_engine()

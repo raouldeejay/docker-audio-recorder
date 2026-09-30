@@ -276,11 +276,10 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
     
     # 2. Arecord vangt pure PCM
     arecord_cmd = [
-        f"arecord -D {device_string} -f {alsa_fmt}"
-        f" -r {str(samplerate)} -c {str(channels)} -t raw - |"
-        f" tee {FIFO_PATH}"
+        "arecord", "-D", device_string, "-f", alsa_fmt,
+        "-r", str(samplerate), "-c", str(channels), "-t", "raw", "-"
     ]
-    arecord_process = subprocess.Popen(arecord_cmd, shell-True,stdout=subprocess.PIPE)
+    arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE)
 
     # 3. FFmpeg met 3 parallelle outputs via the TEE-muxer:
     # - Output 1: PipeWire (Pulse) -> Ongecomprimeerd
@@ -290,10 +289,9 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "ffmpeg", "-y",
         "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
         "-i", "pipe:0",
-        "-f", "pulse", "default"
-        # "-map", "0:a",
-        
-        # 1. Uncompressed Lossless Tap for dynamic recording
+        "-f", "tee",
+        "-map", "0:a",
+        f"[f=mpegts]{UDP_REC_URL}?pkt_size=1316|"             # Lossless UDP target split
         # f"[f=fifo:fifo_format={ffmpeg_fmt}:ar={samplerate}:ac={channels}:drop_pkts_on_overflow=1:attempt_recovery=1]{FIFO_PATH}|" # <-- Safe Async Lossless Tap
         # f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{FIFO_PATH}?timeout=0|"
         f"[f=pulse]default|"

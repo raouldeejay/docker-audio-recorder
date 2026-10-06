@@ -5,9 +5,9 @@ import datetime
 import threading
 import time
 import socket
+from collections import deque
 
 from pathlib import Path
-from urllib.request import urlopen
 
 from flask import Flask, render_template, request, jsonify, Response
 
@@ -21,7 +21,6 @@ low_bandwidth_fd = None
 
 RECORDINGS_ROOT = "/app/recordings/"
 FIFO_PATH = "/tmp/audio_rec.fifo"
-TCP_REC_URL = "tcp://127.0.0.1:9999"  # <-- Safely bypasses the FIFO file system bug
 
 # Ensure directories and pipes are initialized immediately on boot
 Path(RECORDINGS_ROOT).mkdir(parents=True, exist_ok=True)
@@ -41,76 +40,88 @@ input_source = None
 selector_numid = None
 channels = None
 
-
 hwcaps = {
     "card": None,
     "device": None,
     "name": None,
-    "raw": None,          # <-- raw hw params dump
+    "raw": None,
     "bitdepths": None,
     "samplerates": None,
-    "channels": None
+    "channels": None,
 }
 
 HOSTNAME = socket.gethostname()
 
-# State management for background cleanup loop
+# Stream buffering: do not let any downstream consumer block the recorder.
+stream_lock = threading.Lock()
+stream_high_queue = deque(maxlen=200)
+stream_low_queue = deque(maxlen=80)
+audio_router_thread = None
 is_recording = False
-# ------------------------------------------------------------
-# BACKGROUND FIFO MAINTENANCE CONTEXT
-# ------------------------------------------------------------
-def _fifo_drain_loop():
-    """
-    Prevents the continuous stream from locking up when no recording is active.
-    Opens the FIFO pipe and reads data out into the ether when is_recording is False.
-    """
-    global is_recording
-    while True:
-        try:
-            # Open FIFO read-only. This blocks until a writer connects (main engine)
-            with open(FIFO_REC_PATH, "rb") as f:
-                while True:
-                    if not is_recording:
-                        # Flush bytes out to prevent system memory lockups
-                        chunk = f.read(4096)
-                        if not chunk:
-                            break
-                    else:
-                        # When a recording starts, release this file descriptor loop completely
-                        time.sleep(0.1)
-        except Exception:
-            time.sleep(1)
 
-# Start background maintenance loop thread immediately on initialization
-drain_thread = threading.Thread(target=_fifo_drain_loop, daemon=True)
-drain_thread.start()
+
+def _enqueue_stream_chunk(chunk, *, low_quality=False):
+    if not chunk:
+        return
+
+    bucket = stream_low_queue if low_quality else stream_high_queue
+    try:
+        bucket.append(chunk)
+    except Exception:
+        pass
+
+
+def _audio_router_loop():
+    """Runs in a background thread and duplicates raw PCM chunks to recording and live streams."""
+    global arecord_process, ffmpeg_recorder_process, is_recording
+
+    while True:
+        if not arecord_process or arecord_process.poll() is not None:
+            time.sleep(0.2)
+            continue
+
+        try:
+            chunk = arecord_process.stdout.read(4096)
+        except Exception:
+            time.sleep(0.1)
+            continue
+
+        if not chunk:
+            time.sleep(0.2)
+            continue
+
+        # Record to file if active
+        if ffmpeg_recorder_process and ffmpeg_recorder_process.stdin:
+            try:
+                ffmpeg_recorder_process.stdin.write(chunk)
+                ffmpeg_recorder_process.stdin.flush()
+            except (BrokenPipeError, ValueError):
+                ffmpeg_recorder_process = None
+
+        # Feed the monitor streams without blocking the recorder.
+        with stream_lock:
+            _enqueue_stream_chunk(chunk, low_quality=False)
+            _enqueue_stream_chunk(chunk[: max(1, len(chunk) // 2)], low_quality=True)
+
+        time.sleep(0.01)
+
 
 # ------------------------------------------------------------
 # ALSA CARD DETECTION
 # ------------------------------------------------------------
 
 def list_capture_cards():
-    """
-    Returns a list of dicts:
-    [
-        {"card": 1, "device": 0, "name": "U24XL"},
-        ...
-    ]
-    """
+    """Returns a list of dicts: [{"card": 1, "device": 0, "name": "U24XL"}, ...]."""
     global cards
-    
-    if len(cards) == 0:
-        output = subprocess.check_output(["arecord", "-l"], text=True)
 
+    if not cards:
+        output = subprocess.check_output(["arecord", "-l"], text=True)
         current_card = None
 
         for line in output.splitlines():
             m = re.search(r"card (\d+): ([^[]+)\[([^\]]+)\]", line)
             if m:
-                current_card = {
-                    "card": int(m.group(1)),
-                    "name": m.group(3).strip()
-                }
+                current_card = {"card": int(m.group(1)), "name": m.group(3).strip()}
 
             d = re.search(r"device (\d+): ([^[]+)\[([^\]]+)\]", line)
             if d and current_card:
@@ -124,41 +135,36 @@ def list_capture_cards():
 def detect_capture_card():
     global selected_card, selected_device, selected_name
     if selected_card is None:
-        #init
-        cards = list_capture_cards()
-        if not cards:
+        discovered_cards = list_capture_cards()
+        if not discovered_cards:
             return None, None, None
-        c = cards[0]
+        c = discovered_cards[0]
         selected_card = c["card"]
         selected_device = c["device"]
         selected_name = c["name"]
         set_card()
-        
+
     return selected_card, selected_device, selected_name
+
 
 # ------------------------------------------------------------
 # HW PARAMS (CHANNELS / FORMAT / RATE)
 # ------------------------------------------------------------
 def get_hwcaps_non_exclusive(card_index, device_index):
-
     global hwcaps, channels
-    # Paths for device name and streaming capabilities
+
     id_file = Path(f"/mnt/asound/card{card_index}/id")
     stream_file = Path(f"/mnt/asound/card{card_index}/stream0")
-    
-    # 1. Get the short name of the card (e.g., "U24XL")
+
     if id_file.exists():
         hwcaps["name"] = id_file.read_text().strip()
-        
-    # 2. Parse capabilities from stream0 safely
+
     if stream_file.exists():
         content = stream_file.read_text()
-        
-        # We only care about Capture for recording setups
         sections = re.split(r'^(Playback|Capture):', content, flags=re.MULTILINE)
         capture_block = ""
-        
         current_mode = None
+
         for item in sections:
             if item in ["Playback", "Capture"]:
                 current_mode = item
@@ -166,57 +172,40 @@ def get_hwcaps_non_exclusive(card_index, device_index):
             if current_mode == "Capture":
                 capture_block = item
                 break
-                
+
         if capture_block:
-            # Extract values
             bits_found = re.findall(r'Bits:\s*(\d+)', capture_block)
             rates_lines = re.findall(r'Rates:\s*(.+)', capture_block)
             channels_found = re.findall(r'Channels:\s*(\d+)', capture_block)
-            
-            # Process bit depths and sample rates
-            bitdepths = sorted(list(set(int(b) for b in bits_found)))
-            
+
+            bitdepths = sorted({int(b) for b in bits_found})
+
             samplerates = []
             for line in rates_lines:
-                samplerates.extend([int(r.strip()) for r in line.split(',')])
-            samplerates = sorted(list(set(samplerates)))
-            
-            # Process channels (pick the maximum supported if multiple profiles exist)
-            channels = max([int(c) for c in channels_found]) if channels_found else 2
-            
+                samplerates.extend(int(r.strip()) for r in line.split(',') if r.strip().isdigit())
+            samplerates = sorted(set(samplerates))
+
+            channels = max((int(c) for c in channels_found), default=2)
             hwcaps["bitdepths"] = bitdepths
             hwcaps["samplerates"] = samplerates
             hwcaps["channels"] = channels
-            
+
     return hwcaps
 
-# ------------------------------------------------------------
-# SPDIF / LINE SELECTOR (dynamic)
-# ------------------------------------------------------------
 
 def detect_input_selector(card):
-    """
-    Returns numid of an ENUMERATED control with items ['Line', 'IEC958 In']
-    or None if not present.
-    """
-    output = subprocess.check_output(
-        ["amixer", "-c", str(card), "contents"],
-        text=True
-    )
-
+    """Returns numid of an ENUMERATED control with items ['Line', 'IEC958 In'] or None if not present."""
+    output = subprocess.check_output(["amixer", "-c", str(card), "contents"], text=True)
     blocks = output.split("numid=")[1:]
     for block in blocks:
         if "ENUMERATED" in block and "Line" in block and "IEC958 In" in block:
             numid = int(block.split(",")[0])
             return numid
-
     return None
 
+
 def get_input_source(card, numid):
-    output = subprocess.check_output(
-        ["amixer", "-c", str(card), "cget", f"numid={numid}"],
-        text=True
-    )
+    output = subprocess.check_output(["amixer", "-c", str(card), "cget", f"numid={numid}"], text=True)
     if "values=0" in output:
         return "Line"
     return "IEC958 In"
@@ -226,9 +215,7 @@ def set_input_source(card, numid, source):
     global input_source
     input_source = source
     value = 0 if source == "Line" else 1
-    subprocess.check_call(
-        ["amixer", "-c", str(card), "cset", f"numid={numid}", str(value)]
-    )
+    subprocess.check_call(["amixer", "-c", str(card), "cset", f"numid={numid}", str(value)])
 
 
 # ------------------------------------------------------------
@@ -238,6 +225,7 @@ def set_input_source(card, numid, source):
 def generate_filename():
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"recording_{ts}.aiff"
+
 
 def get_audio_formats(bitdepth):
     if bitdepth == 8:
@@ -251,105 +239,101 @@ def get_audio_formats(bitdepth):
     else:
         raise ValueError(f"Unsupported bit depth: {bitdepth}")
 
+
 # ------------------------------------------------------------
 # RECORDING USING ARECORD
 # ------------------------------------------------------------
-
 def start_arecord(filename, fmt):
-    """
-    Launch arecord as a subprocess.
-    """
+    """Launch a dedicated recorder process that reads from the same PCM stream without using a blocking FFmpeg tee."""
     global ffmpeg_recorder_process, samplerate, channels, is_recording
+
     filepath = os.path.join(RECORDINGS_ROOT, filename)
     _, ffmpeg_fmt = get_audio_formats(bitdepth)
     pcm_encoder = f"pcm_{ffmpeg_fmt}"
 
-    # Signal maintenance drain thread to pause processing loopback lines
     is_recording = True
     time.sleep(0.05)
 
-    
-    # Instruct dynamic recorder process to catch uncompressed data directly off the pipe
     rec_cmd = [
         "ffmpeg", "-y",
         "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
-        "-i", FIFO_PATH,
+        "-i", "pipe:0",
         "-c:a", pcm_encoder,
-        filepath  # Extension auto-detected cleanly (.wav / .aif)
+        filepath,
     ]
 
-    ffmpeg_recorder_process = subprocess.Popen(rec_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return jsonify({"status": "success", "message": f"Recording started {fmt.upper()}", "path": filepath})
+    ffmpeg_recorder_process = subprocess.Popen(
+        rec_cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    return {"status": "success", "message": f"Recording started {fmt.upper()}", "path": filepath}
+
 
 def set_card():
     global selected_card, selected_device, selected_name, hwcaps
-    # Cache raw hw params ONCE
     if hwcaps["card"] != selected_card:
-        #raw = dump_hw_params(selected_card, selected_device)
-        
-        # bitdepth and samplerate prefilled
         hwcaps = get_hwcaps_non_exclusive(selected_card, selected_device)
         hwcaps["card"] = selected_card
         hwcaps["device"] = selected_device
         hwcaps["name"] = selected_name
-        #hwcaps["raw"] = raw
 
-
-
-    print("RAW:", repr(hwcaps["raw"]))
 
 def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
-    global arecord_process, ffmpeg_stream_process, card, device, samplerate, bitdepth, hwcaps, low_bandwidth_fd
+    global arecord_process, ffmpeg_stream_process, card, device, samplerate, bitdepth, hwcaps, low_bandwidth_fd, audio_router_thread
+
     samplerate = _samplerate
     bitdepth = _bitdepth
-    
-    alsa_fmt, ffmpeg_fmt = get_audio_formats(bitdepth)
+
+    if card is None or device is None:
+        return
+
+    alsa_fmt, _ = get_audio_formats(bitdepth)
     device_string = f"hw:{card},{device}"
+    channel_count = hwcaps.get("channels", 2)
 
-    channels = hwcaps["channels"] # detect_channel_count(card, device)
-
-    # Clean termination sequence for active hot-swap requests
     for proc in [ffmpeg_stream_process, arecord_process]:
         if proc and proc.poll() is None:
             proc.terminate()
-            proc.wait()
-    
-    # 1. arecord captures pristine raw PCM data
+            proc.wait(timeout=2)
+
     arecord_cmd = [
-        "arecord", "-D", device_string, "-f", alsa_fmt,
-        "-r", str(samplerate), "-c", str(channels), "-t", "raw", "-"
+        "arecord",
+        "-D", device_string,
+        "-f", alsa_fmt,
+        "-r", str(samplerate),
+        "-c", str(channel_count),
+        "-t", "raw",
+        "-",
     ]
-    arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE)
 
-    # 2. Duplicate streams. We route raw PCM directly to a dedicated local FIFO pipe.
-    # Because our background maintenance thread drains it, this never blocks monitor channels.
-    ffmpeg_cmd = [
-        "ffmpeg", "-y",
-        "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
-        "-i", "pipe:0",
-        "-f", "tee",
-        "-map", "0:a",
-        f"[f={ffmpeg_fmt}:ar={samplerate}:ac={channels}]{FIFO_PATH}|"  # <-- True uncompressed bit-perfect tap
-        f"[f=pulse]default|"                                                # PipeWire Client Monitor
-        f"[f=adts:c:a=aac:b:a=256k]http://127.0.0.1:8081|"                 # High Quality Web Monitor
-        f"[f=adts:c:a=aac:b:a=64k:ac=1]http://127.0.0.1:8082"              # Low Quality Web Monitor
-    ]
-    
-    ffmpeg_stream_process = subprocess.Popen(
-        ffmpeg_cmd, 
-        stdin=arecord_process.stdout,
-        stderr=subprocess.DEVNULL
-    )
+    arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
 
+    ffmpeg_stream_process = None
 
-    print("🚀 Dual-Bandbreedte Audio Engine actief.")
+    if audio_router_thread is None or not audio_router_thread.is_alive():
+        audio_router_thread = threading.Thread(target=_audio_router_loop, daemon=True)
+        audio_router_thread.start()
+
+    print("🚀 Audio engine started without tee-blocking stream splitting.")
+
 
 def stop_continuous_audio_engine():
-    """Beëindigt de arecord- en FFmpeg-streamprocessen op een elegante manier."""
-    global arecord_process, ffmpeg_stream_process, low_bandwidth_fd
+    """Stop active engine components without leaving dangling pipes."""
+    global arecord_process, ffmpeg_stream_process, ffmpeg_recorder_process, low_bandwidth_fd, is_recording
+
     print("Stopping active audio engine components...")
 
-    # Termineer arecord eerst (stopt de toevoer van nieuwe hardware bytes)
+    if ffmpeg_recorder_process:
+        try:
+            ffmpeg_recorder_process.terminate()
+            ffmpeg_recorder_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            ffmpeg_recorder_process.kill()
+        ffmpeg_recorder_process = None
+
     if arecord_process:
         try:
             arecord_process.terminate()
@@ -358,28 +342,24 @@ def stop_continuous_audio_engine():
             arecord_process.kill()
         arecord_process = None
 
-    # Laat FFmpeg zijn resterende buffers verwerken en sluiten
     if ffmpeg_stream_process:
         try:
-            # .communicate() sluit stdin en wacht netjes tot het proces klaar is
-            ffmpeg_stream_process.communicate(timeout=2)
-        except (subprocess.TimeoutExpired, ValueError):
+            ffmpeg_stream_process.terminate()
+            ffmpeg_stream_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
             ffmpeg_stream_process.kill()
         ffmpeg_stream_process = None
 
-    # if low_bandwidth_fd:
-    #    try:
-    #        low_bandwidth_fd.close()
-    #    except (subprocess.TimeoutExpired, ValueError):
-    #        low_bandwidth_fd.kill()
-    #    low_bandwidth_fd = None
+    is_recording = False
+    stream_high_queue.clear()
+    stream_low_queue.clear()
+
 
 def init_card():
     global cards, card, device, name, input_source, selector_numid
     cards = list_capture_cards()
-    # init to 1st or selected card
     card, device, name = detect_capture_card()
-    
+
     input_source = None
     selector_numid = None
 
@@ -388,13 +368,13 @@ def init_card():
         if selector_numid is not None:
             input_source = get_input_source(card, selector_numid)
 
+
 # ------------------------------------------------------------
 # FLASK ROUTES
 # ------------------------------------------------------------
 
 @app.route("/")
 def index():
-    
     return render_template(
         "index.html",
         cards=cards,
@@ -403,40 +383,44 @@ def index():
         selected_name=name,
         input_source=input_source,
         selector_present=(selector_numid is not None),
-        hostname=HOSTNAME
+        hostname=HOSTNAME,
     )
 
 
 @app.route("/api/status")
 def api_status():
-    return jsonify({"recording": ffmpeg_recorder_process is not None})
+    return jsonify({"recording": bool(ffmpeg_recorder_process and ffmpeg_recorder_process.poll() is None)})
+
+
+def _stream_generator(kind):
+    while True:
+        if kind == "high":
+            bucket = stream_high_queue
+        else:
+            bucket = stream_low_queue
+
+        try:
+            with stream_lock:
+                if bucket:
+                    chunk = bucket.popleft()
+                    yield chunk
+                else:
+                    time.sleep(0.05)
+        except Exception:
+            time.sleep(0.05)
+
 
 @app.route('/stream.aac')
 def stream_audio():
-    """Live monitor endpoint voor de browser (ondersteunt meerdere luisteraars)."""
-    def generate():
-    
-        with urlopen('http://127.0.0.1:8081', timeout=5) as stream:
-        # if ffmpeg_stream_process and ffmpeg_stream_process.stdout:
-            while True:
-                chunk = stream.read(4096)
-                if not chunk:
-                    break
-                yield chunk
-    return Response(generate(), mimetype='audio/aac')
+    """Live monitor endpoint using buffered PCM, decoupled from the recorder so it cannot block capture."""
+    return Response(_stream_generator("high"), mimetype='audio/aac')
+
 
 @app.route('/low_stream.aac')
 def low_bandwidth_stream():
-    """Lage kwaliteit monitor (Mono, 64 kbps AAC) geoptimaliseerd voor WiFi/4G."""
-    def generate():
-        # global low_bandwidth_fd
-        # if low_bandwidth_fd:
-        with  urlopen('htyp://127.0.0.1:8082', timeout=5) as stream:
-            while True:
-                chunk = stream.read(4096)
-                if not chunk: break
-                yield chunk
-    return Response(generate(), mimetype='audio/aac')
+    """Low-quality monitor stream with aggressive frame dropping."""
+    return Response(_stream_generator("low"), mimetype='audio/aac')
+
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
@@ -445,49 +429,50 @@ def api_start():
     if ffmpeg_recorder_process and ffmpeg_recorder_process.poll() is None:
         return jsonify({"error": "Already recording"}), 400
 
-    data = request.json
+    payload = request.get_json(silent=True) or {}
 
-    filename = data.get("filename", "").strip()
-    if filename == "":
-        filename = generate_filename()
-    if (samplerate != int(data.get("samplerate")) or bitdepth != int(data.get("samplerate"))):
-        samplerate = int(data.get("samplerate", 48000))
-        bitdepth = int(data.get("bitdepth", 16))
-        stop_continuous_audio_engine()
-        init_continuous_audio_engine(samplerate, bitdepth)
-    fmt = Path(data.get("filename", "").lower()).suffix
-    if fmt not in ['wav', 'aiff']:
-        fmt = 'aif'
-        
     if card is None:
         return jsonify({"error": "No capture card found"}), 400
 
-    start_arecord(filename, fmt)
+    filename = str(payload.get("filename", "")).strip()
+    if filename == "":
+        filename = generate_filename()
 
-    return jsonify({"status": "recording", "filename": filename})
+    requested_samplerate = int(payload.get("samplerate", samplerate or 48000))
+    requested_bitdepth = int(payload.get("bitdepth", bitdepth or 16))
+
+    if samplerate != requested_samplerate or bitdepth != requested_bitdepth:
+        samplerate = requested_samplerate
+        bitdepth = requested_bitdepth
+        stop_continuous_audio_engine()
+        init_continuous_audio_engine(samplerate, bitdepth)
+
+    fmt = Path(filename.lower()).suffix.replace('.', '')
+    if fmt not in ['wav', 'aiff', 'aif']:
+        fmt = 'aif'
+
+    result = start_arecord(filename, fmt)
+    return jsonify({"status": "recording", "filename": filename, **result})
 
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
-    global ffmpeg_recorder_process
-    
-    # FIX: Corrected condition to check if process is missing or dead
+    global ffmpeg_recorder_process, is_recording
+
     if not ffmpeg_recorder_process or ffmpeg_recorder_process.poll() is not None:
         return jsonify({"status": "error", "message": "No active recording found"}), 400
-    
+
     try:
-        # Gracefully signal FFmpeg to flush PCM buffers and finalize header chunks (RIFF/AIFF)
         ffmpeg_recorder_process.terminate()
         ffmpeg_recorder_process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        # Fallback security if process deadlocks on pipe closure
         ffmpeg_recorder_process.kill()
         ffmpeg_recorder_process.wait()
     finally:
         ffmpeg_recorder_process = None
         is_recording = False
-    return jsonify({"status": "success", "message": "Recording saved"})
 
+    return jsonify({"status": "success", "message": "Recording saved"})
 
 
 @app.route("/api/input", methods=["GET"])
@@ -499,10 +484,7 @@ def api_get_input():
     if selector_numid is None:
         return jsonify({"source": None, "supported": False})
 
-    return jsonify({
-        "source": input_source,
-        "supported": True
-    })
+    return jsonify({"source": input_source, "supported": True})
 
 
 @app.route("/api/input", methods=["POST"])
@@ -514,13 +496,14 @@ def api_set_input():
     if selector_numid is None:
         return jsonify({"error": "input selector not supported"}), 400
 
-    data = request.json
-    source = data.get("source")
+    payload = request.get_json(silent=True) or {}
+    source = payload.get("source")
     if source not in ["Line", "IEC958 In"]:
         return jsonify({"error": "invalid source"}), 400
 
     set_input_source(card, selector_numid, source)
     return jsonify({"status": "ok", "source": source})
+
 
 @app.route("/api/caps")
 def api_caps():
@@ -535,35 +518,35 @@ def api_caps():
         "channels": hwcaps["channels"],
         "name": hwcaps["name"],
         "card": hwcaps["card"],
-        "device": hwcaps["device"]
+        "device": hwcaps["device"],
     })
+
 
 @app.route("/api/cards")
 def api_cards():
     global selected_card, selected_device, selected_name
 
-    cards = list_capture_cards()
+    cards_list = list_capture_cards()
 
-    # Auto-select if exactly one card is present
-    if len(cards) == 1:
-        c = cards[0]
+    if len(cards_list) == 1:
+        c = cards_list[0]
         selected_card = c["card"]
         selected_device = c["device"]
         selected_name = c["name"]
         set_card()
 
-    return jsonify(cards)
+    return jsonify(cards_list)
+
 
 @app.route("/api/select_card", methods=["POST"])
 def api_select_card():
     global selected_card, selected_device, selected_name
 
-    data = request.json or {}
-    if selected_card != date.get("card"):
-        selected_card = data.get("card")
-        selected_device = data.get("device")
+    payload = request.get_json(silent=True) or {}
+    if selected_card != payload.get("card"):
+        selected_card = payload.get("card")
+        selected_device = payload.get("device")
 
-        # Store name
         for c in list_capture_cards():
             if c["card"] == selected_card and c["device"] == selected_device:
                 selected_name = c["name"]
@@ -572,8 +555,9 @@ def api_select_card():
 
     return jsonify({"status": "ok"})
 
+
 if __name__ == "__main__":
     init_card()
-    init_continuous_audio_engine(48000, 16)
-        
+    if card is not None and device is not None:
+        init_continuous_audio_engine(48000, 16)
     app.run(host="0.0.0.0", port=5000)

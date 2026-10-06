@@ -15,11 +15,9 @@ app = Flask(__name__)
 
 # Global recorder process
 arecord_process = None
-ffmpeg_stream_process = None
 ffmpeg_recorder_process = None
 
 RECORDINGS_ROOT = "/app/recordings/"
-FIFO_PATH = "/tmp/audio_rec.fifo"
 
 # Ensure directories are initialized immediately on boot
 Path(RECORDINGS_ROOT).mkdir(parents=True, exist_ok=True)
@@ -110,14 +108,6 @@ def _audio_router_loop():
             else:
                 exit_code = ffmpeg_recorder_process.returncode
                 _log(f"Recorder process died (exit code: {exit_code})")
-                # Try to capture stderr
-                if ffmpeg_recorder_process.stderr:
-                    try:
-                        err = ffmpeg_recorder_process.stderr.read().decode('utf-8', errors='ignore')
-                        if err:
-                            _log(f"FFmpeg stderr: {err[:200]}")
-                    except:
-                        pass
                 ffmpeg_recorder_process = None
 
         # Feed the monitor streams without blocking the recorder.
@@ -288,51 +278,36 @@ def get_audio_formats(bitdepth):
 
 
 # ------------------------------------------------------------
-# RECORDING USING FFMPEG (direct from router)
+# RECORDING — Direct arecord to file (minimal, proven approach)
 # ------------------------------------------------------------
 def start_arecord(filename, fmt):
-    """Launch FFmpeg recorder that ingests raw PCM from the router thread."""
-    global ffmpeg_recorder_process, samplerate, channels, is_recording
+    """Direct arecord capture to WAV file. No FFmpeg pipeline."""
+    global arecord_process, samplerate, channels, is_recording
 
     filepath = os.path.join(RECORDINGS_ROOT, filename)
-    _, ffmpeg_fmt = get_audio_formats(bitdepth)
+    alsa_fmt, _ = get_audio_formats(bitdepth)
+    device_string = f"hw:{card},{device}"
 
-    # Force WAV format for reliability
     rec_cmd = [
-        "ffmpeg", "-y",
-        "-f", ffmpeg_fmt,
-        "-ar", str(samplerate),
-        "-ac", str(channels),
-        "-i", "pipe:0",
-        "-c:a", "pcm_s16le" if bitdepth == 16 else f"pcm_s{bitdepth}le",
-        "-f", "wav",
+        "arecord",
+        "-D", device_string,
+        "-f", alsa_fmt,
+        "-r", str(samplerate),
+        "-c", str(channels),
+        "-t", "wav",
         filepath,
     ]
 
-    _log(f"FFmpeg command: {' '.join(rec_cmd)}")
+    _log(f"arecord command: {' '.join(rec_cmd)}")
 
-    ffmpeg_recorder_process = subprocess.Popen(
+    arecord_process = subprocess.Popen(
         rec_cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
-        bufsize=0,
     )
 
     is_recording = True
-    time.sleep(0.15)
-
-    if ffmpeg_recorder_process.poll() is not None:
-        # Process already exited — grab stderr
-        exit_code = ffmpeg_recorder_process.returncode
-        stderr = ffmpeg_recorder_process.stderr.read().decode('utf-8', errors='ignore') if ffmpeg_recorder_process.stderr else ""
-        _log(f"FFmpeg exited immediately with code {exit_code}")
-        _log(f"FFmpeg stderr: {stderr[:300]}")
-        ffmpeg_recorder_process = None
-        is_recording = False
-        return {"status": "error", "message": f"FFmpeg failed to start: {stderr[:100]}", "path": filepath}
-
-    _log(f"Recorder started (PID {ffmpeg_recorder_process.pid})")
+    _log(f"Direct arecord recorder started (PID {arecord_process.pid}, writing to {filepath})")
     return {"status": "success", "message": f"Recording started (WAV, {samplerate}Hz, {channels}ch, {bitdepth}bit)", "path": filepath}
 
 
@@ -346,6 +321,7 @@ def set_card():
 
 
 def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
+    """Start arecord for live stream only (no recording yet)."""
     global arecord_process, card, device, samplerate, bitdepth, hwcaps, audio_router_thread
 
     samplerate = _samplerate
@@ -366,6 +342,7 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         except subprocess.TimeoutExpired:
             arecord_process.kill()
 
+    # arecord for live streaming ONLY (not recording)
     arecord_cmd = [
         "arecord",
         "-D", device_string,
@@ -376,14 +353,14 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-",
     ]
 
-    _log(f"arecord command: {' '.join(arecord_cmd)}")
+    _log(f"Stream arecord command: {' '.join(arecord_cmd)}")
     arecord_process = subprocess.Popen(
         arecord_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         bufsize=0
     )
-    _log(f"arecord started (PID {arecord_process.pid})")
+    _log(f"Stream arecord started (PID {arecord_process.pid})")
 
     if audio_router_thread is None or not audio_router_thread.is_alive():
         audio_router_thread = threading.Thread(target=_audio_router_loop, daemon=True)
@@ -394,23 +371,10 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
 
 
 def stop_continuous_audio_engine():
-    """Stop active engine components."""
-    global arecord_process, ffmpeg_recorder_process, is_recording
+    """Stop the live stream arecord."""
+    global arecord_process, is_recording
 
     _log("Stopping audio engine...")
-
-    if ffmpeg_recorder_process:
-        try:
-            if ffmpeg_recorder_process.stdin:
-                ffmpeg_recorder_process.stdin.close()
-            ffmpeg_recorder_process.terminate()
-            ffmpeg_recorder_process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            ffmpeg_recorder_process.kill()
-            ffmpeg_recorder_process.wait()
-        except Exception as e:
-            _log(f"Error stopping recorder: {e}")
-        ffmpeg_recorder_process = None
 
     if arecord_process:
         try:
@@ -420,7 +384,7 @@ def stop_continuous_audio_engine():
             arecord_process.kill()
             arecord_process.wait()
         except Exception as e:
-            _log(f"Error stopping arecord: {e}")
+            _log(f"Error stopping stream arecord: {e}")
         arecord_process = None
 
     is_recording = False
@@ -463,7 +427,8 @@ def index():
 
 @app.route("/api/status")
 def api_status():
-    recording = bool(ffmpeg_recorder_process and ffmpeg_recorder_process.poll() is None)
+    # Check if the recorder arecord is still running
+    recording = is_recording and arecord_process and arecord_process.poll() is None
     return jsonify({"recording": recording})
 
 
@@ -505,9 +470,9 @@ def api_logs():
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
-    global ffmpeg_recorder_process, card, device, name, samplerate, bitdepth
+    global arecord_process, card, device, name, samplerate, bitdepth, is_recording
 
-    if ffmpeg_recorder_process and ffmpeg_recorder_process.poll() is None:
+    if is_recording and arecord_process and arecord_process.poll() is None:
         return jsonify({"error": "Already recording"}), 400
 
     payload = request.get_json(silent=True) or {}
@@ -525,6 +490,7 @@ def api_start():
     if samplerate != requested_samplerate or bitdepth != requested_bitdepth:
         samplerate = requested_samplerate
         bitdepth = requested_bitdepth
+        # Restart live stream with new settings
         stop_continuous_audio_engine()
         init_continuous_audio_engine(samplerate, bitdepth)
 
@@ -534,26 +500,24 @@ def api_start():
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
-    global ffmpeg_recorder_process, is_recording
+    global arecord_process, is_recording
 
-    if not ffmpeg_recorder_process or ffmpeg_recorder_process.poll() is not None:
+    if not is_recording or not arecord_process or arecord_process.poll() is not None:
         return jsonify({"status": "error", "message": "No active recording found"}), 400
 
     is_recording = False
     _log("Stopping recording...")
 
     try:
-        if ffmpeg_recorder_process.stdin:
-            ffmpeg_recorder_process.stdin.close()
-        ffmpeg_recorder_process.terminate()
-        ffmpeg_recorder_process.wait(timeout=5)
+        arecord_process.terminate()
+        arecord_process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        ffmpeg_recorder_process.kill()
-        ffmpeg_recorder_process.wait()
+        arecord_process.kill()
+        arecord_process.wait()
     except Exception as e:
         _log(f"Error stopping recorder: {e}")
     finally:
-        ffmpeg_recorder_process = None
+        arecord_process = None
 
     _log("Recording stopped")
     return jsonify({"status": "success", "message": "Recording saved"})

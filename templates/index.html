@@ -55,6 +55,7 @@
             cursor: pointer;
             font-size: 15px;
             margin-right: 10px;
+            margin-bottom: 8px;
         }
         
         button:disabled {
@@ -63,8 +64,16 @@
             pointer-events: none;
         }
 
-        button:hover {
+        button:hover:not(:disabled) {
             background: #005fa3;
+        }
+
+        button.active {
+            background: #28a745;
+        }
+
+        button.active:hover {
+            background: #218838;
         }
 
         select, input[type="text"] {
@@ -97,19 +106,64 @@
         .status.recording {
             color: #5cb85c;
         }
+
+        .stream-section {
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .stream-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+
+        .stream-status {
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+        }
+
+        .stream-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ccc;
+            margin-right: 6px;
+        }
+
+        .stream-indicator.active {
+            background: #5cb85c;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        #audioPlayer {
+            width: 100%;
+            margin-top: 15px;
+        }
     </style>
 </head>
 
 <body>
 <div class="container">
 
-    <h1>Docker Audio Recorder</h1>
+    <h1>🎙️ Docker Audio Recorder</h1>
     <div class="hostname">Host: {{ hostname }}</div>
 
     <!-- STATUS -->
     <div class="section">
         <h2>Status</h2>
-        <p>Status: <span id="recordingStatus" class="status">Idle</span></p>
+        <p>Recording: <span id="recordingStatus" class="status">Idle</span></p>
     </div>
 
     <!-- CARD LIST -->
@@ -190,18 +244,35 @@
     <div class="section">
         <h2>Recording</h2>
 
-        <button id="startBtn" onclick="startRecording()">Start</button>
-        <button id="stopBtn" onclick="stopRecording()" disabled>Stop</button>
+        <button id="startBtn" onclick="startRecording()">▶ Start Recording</button>
+        <button id="stopBtn" onclick="stopRecording()" disabled>⏹ Stop Recording</button>
 
     </div>
     
-    <div class="section">
-        <audio id="audioMonitor" autoplay></audio>
+    <!-- LIVE STREAM MONITORING -->
+    <div class="stream-section">
+        <h2>🔴 Live Stream Monitoring</h2>
         
-        <!-- Schakel tussen High Quality en Low Bandwidth -->
-        <button onclick="setQuality('/stream.aac')">Studio Kwaliteit (LAN)</button>
-        <button onclick="setQuality('/low_stream.aac')">Besparingsmodus (WiFi)</button>
+        <p>Monitor the audio stream in real-time. Switch between quality levels based on your network:</p>
 
+        <div class="stream-controls">
+            <button id="qualityHighBtn" class="active" onclick="switchQuality('high')">
+                📡 Studio Quality (LAN)
+            </button>
+            <button id="qualityLowBtn" onclick="switchQuality('low')">
+                📶 Low Bandwidth (WiFi)
+            </button>
+            <button id="stopStreamBtn" onclick="stopStream()">
+                ⏸ Stop Stream
+            </button>
+        </div>
+
+        <audio id="audioPlayer" controls playsinline></audio>
+
+        <div class="stream-status">
+            <span class="stream-indicator" id="streamIndicator"></span>
+            <span id="streamStatusText">Stream: Idle</span>
+        </div>
     </div>
     
 </div>
@@ -209,6 +280,9 @@
 <script>
 let previousBitdepth = null;
 let previousSamplerate = null;
+let currentQuality = 'high';
+let currentStreamUrl = null;
+let streamAbortController = null;
 
 document.getElementById("bitdepth").addEventListener("change", e => {
     previousBitdepth = parseInt(e.target.value);
@@ -232,7 +306,8 @@ function pollStatus() {
                 el.innerText = "Idle";
                 el.classList.remove("recording");
             }
-        });
+        })
+        .catch(e => console.error("Status poll error:", e));
 }
 
 function refreshInputSource() {
@@ -266,7 +341,7 @@ function setInputSource() {
 
 function setCard() {
     const card = parseInt(document.getElementById("cardSelect").value);
-    const device = 0; // or from card list
+    const device = 0;
 
     fetch("/api/select_card", {
         method: "POST",
@@ -302,11 +377,9 @@ function startRecording() {
 }
 
 function stopRecording() {
-    
     fetch("/api/stop", {method: "POST"})
         .then(r => r.json())
         .then(data => {
-            
             document.getElementById("startBtn").disabled = false;
             document.getElementById("stopBtn").disabled = true;
             alert("Recording stopped");
@@ -319,7 +392,6 @@ function loadCaps() {
         .then(data => {
             if (data.error) return;
 
-            // Populate samplerates
             const sr = document.getElementById("samplerate");
             sr.innerHTML = "";
             data.samplerates.forEach(rate => {
@@ -329,7 +401,6 @@ function loadCaps() {
                 sr.appendChild(opt);
             });
 
-            // Populate bitdepths
             const bd = document.getElementById("bitdepth");
             bd.innerHTML = "";
             data.bitdepths.forEach(depth => {
@@ -339,17 +410,14 @@ function loadCaps() {
                 bd.appendChild(opt);
             });
             
-            // Determine default bitdepth
-            let defaultBitdepth = data.bitdepths.includes("24")
+            let defaultBitdepth = data.bitdepths.includes(24)
                 ? 24
                 : data.bitdepths[data.bitdepths.length - 1];
 
-            // Determine default samplerate
-            let defaultSamplerate = data.samplerates.includes("48000")
+            let defaultSamplerate = data.samplerates.includes(48000)
                 ? 48000
                 : data.samplerates[data.samplerates.length - 1];
 
-            // Apply defaults ONLY if user has not selected before
             const _bd = previousBitdepth ?? defaultBitdepth;
             const _sr = previousSamplerate ?? defaultSamplerate;
 
@@ -364,11 +432,60 @@ function populateCardDropdown(cards) {
 
     cards.forEach(c => {
         const opt = document.createElement("option");
-        opt.value = c.card;        // card number
+        opt.value = c.card;
         opt.textContent = `${c.name} (card ${c.card}, device ${c.device})`;
-        opt.dataset.device = c.device;   // store device number
+        opt.dataset.device = c.device;
         sel.appendChild(opt);
     });
+}
+
+function switchQuality(quality) {
+    currentQuality = quality;
+
+    // Update button states
+    document.getElementById("qualityHighBtn").classList.toggle("active", quality === "high");
+    document.getElementById("qualityLowBtn").classList.toggle("active", quality === "low");
+
+    const endpoint = quality === "high" ? "/stream.aac" : "/low_stream.aac";
+    const player = document.getElementById("audioPlayer");
+    
+    // Stop current stream if any
+    stopStream();
+
+    // Set stream source with cache buster
+    currentStreamUrl = `${endpoint}?t=${new Date().getTime()}`;
+    player.src = currentStreamUrl;
+
+    // Attempt to play
+    player.play()
+        .then(() => {
+            updateStreamStatus(true, quality);
+        })
+        .catch(e => {
+            console.error("Stream play error:", e);
+            updateStreamStatus(false, quality);
+        });
+}
+
+function stopStream() {
+    const player = document.getElementById("audioPlayer");
+    player.pause();
+    player.src = "";
+    updateStreamStatus(false, null);
+}
+
+function updateStreamStatus(isActive, quality) {
+    const indicator = document.getElementById("streamIndicator");
+    const statusText = document.getElementById("streamStatusText");
+
+    if (isActive) {
+        indicator.classList.add("active");
+        const qualityLabel = quality === "high" ? "Studio Quality" : "Low Bandwidth";
+        statusText.textContent = `Stream: LIVE (${qualityLabel})`;
+    } else {
+        indicator.classList.remove("active");
+        statusText.textContent = "Stream: Idle";
+    }
 }
 
 window.onload = function() {
@@ -376,10 +493,8 @@ window.onload = function() {
         .then(r => r.json())
         .then(cards => {
             if (cards.length === 1) {
-                // Backend already auto-selected the card
                 loadCaps();
             } else {
-                // Populate dropdown and wait for user selection
                 populateCardDropdown(cards);
             }
         });
@@ -387,14 +502,20 @@ window.onload = function() {
     refreshInputSource();
     pollStatus();
     setInterval(pollStatus, 1000);
-};
 
-function setQuality(endpoint) {
-    const player = document.getElementById('audioMonitor');
-    player.src = `${endpoint}?t=${new Date().getTime()}`;
-    player.load();
-    player.play().catch(e => console.log("Afspelen mislukt:", e));
-}
+    // Audio player event listeners for stream status
+    const player = document.getElementById("audioPlayer");
+    player.addEventListener("play", () => {
+        updateStreamStatus(true, currentQuality);
+    });
+    player.addEventListener("pause", () => {
+        updateStreamStatus(false, null);
+    });
+    player.addEventListener("error", (e) => {
+        console.error("Audio player error:", e);
+        updateStreamStatus(false, null);
+    });
+};
 </script>
 
 </body>

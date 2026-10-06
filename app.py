@@ -17,15 +17,12 @@ app = Flask(__name__)
 arecord_process = None
 ffmpeg_stream_process = None
 ffmpeg_recorder_process = None
-low_bandwidth_fd = None
 
 RECORDINGS_ROOT = "/app/recordings/"
 FIFO_PATH = "/tmp/audio_rec.fifo"
 
-# Ensure directories and pipes are initialized immediately on boot
+# Ensure directories are initialized immediately on boot
 Path(RECORDINGS_ROOT).mkdir(parents=True, exist_ok=True)
-if not os.path.exists(FIFO_PATH):
-    os.mkfifo(FIFO_PATH)
 
 cards = []
 selected_card = None
@@ -44,7 +41,6 @@ hwcaps = {
     "card": None,
     "device": None,
     "name": None,
-    "raw": None,
     "bitdepths": None,
     "samplerates": None,
     "channels": None,
@@ -58,6 +54,17 @@ stream_high_queue = deque(maxlen=200)
 stream_low_queue = deque(maxlen=80)
 audio_router_thread = None
 is_recording = False
+recorder_log = []
+
+
+def _log(msg):
+    """Log to both console and in-memory buffer for debugging."""
+    timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+    log_msg = f"[{timestamp}] {msg}"
+    print(log_msg)
+    recorder_log.append(log_msg)
+    if len(recorder_log) > 100:
+        recorder_log.pop(0)
 
 
 def _enqueue_stream_chunk(chunk, *, low_quality=False):
@@ -83,7 +90,7 @@ def _audio_router_loop():
         try:
             chunk = arecord_process.stdout.read(4096)
         except Exception as e:
-            print(f"Router read error: {e}")
+            _log(f"Router read error: {e}")
             time.sleep(0.1)
             continue
 
@@ -98,10 +105,19 @@ def _audio_router_loop():
                     ffmpeg_recorder_process.stdin.write(chunk)
                     ffmpeg_recorder_process.stdin.flush()
                 except (BrokenPipeError, ValueError, AttributeError) as e:
-                    print(f"Recorder write error: {e}")
+                    _log(f"Recorder write error: {e}")
                     ffmpeg_recorder_process = None
             else:
-                print(f"Recorder process died (exit code: {ffmpeg_recorder_process.returncode})")
+                exit_code = ffmpeg_recorder_process.returncode
+                _log(f"Recorder process died (exit code: {exit_code})")
+                # Try to capture stderr
+                if ffmpeg_recorder_process.stderr:
+                    try:
+                        err = ffmpeg_recorder_process.stderr.read().decode('utf-8', errors='ignore')
+                        if err:
+                            _log(f"FFmpeg stderr: {err[:200]}")
+                    except:
+                        pass
                 ffmpeg_recorder_process = None
 
         # Feed the monitor streams without blocking the recorder.
@@ -121,7 +137,12 @@ def list_capture_cards():
     global cards
 
     if not cards:
-        output = subprocess.check_output(["arecord", "-l"], text=True)
+        try:
+            output = subprocess.check_output(["arecord", "-l"], text=True)
+        except subprocess.CalledProcessError as e:
+            _log(f"Failed to list cards: {e}")
+            return []
+
         current_card = None
 
         for line in output.splitlines():
@@ -143,11 +164,13 @@ def detect_capture_card():
     if selected_card is None:
         discovered_cards = list_capture_cards()
         if not discovered_cards:
+            _log("No capture cards detected")
             return None, None, None
         c = discovered_cards[0]
         selected_card = c["card"]
         selected_device = c["device"]
         selected_name = c["name"]
+        _log(f"Auto-selected card: {selected_name} (card {selected_card}, device {selected_device})")
         set_card()
 
     return selected_card, selected_device, selected_name
@@ -185,43 +208,61 @@ def get_hwcaps_non_exclusive(card_index, device_index):
             channels_found = re.findall(r'Channels:\s*(\d+)', capture_block)
 
             bitdepths = sorted({int(b) for b in bits_found})
-
             samplerates = []
             for line in rates_lines:
                 samplerates.extend(int(r.strip()) for r in line.split(',') if r.strip().isdigit())
             samplerates = sorted(set(samplerates))
 
             channels = max((int(c) for c in channels_found), default=2)
-            hwcaps["bitdepths"] = bitdepths
-            hwcaps["samplerates"] = samplerates
+            hwcaps["bitdepths"] = bitdepths or [16]
+            hwcaps["samplerates"] = samplerates or [48000]
             hwcaps["channels"] = channels
+    else:
+        # Fallback defaults if sysfs doesn't exist
+        hwcaps["bitdepths"] = [16, 24]
+        hwcaps["samplerates"] = [48000]
+        hwcaps["channels"] = 2
 
     return hwcaps
 
 
 def detect_input_selector(card):
     """Returns numid of an ENUMERATED control with items ['Line', 'IEC958 In'] or None if not present."""
-    output = subprocess.check_output(["amixer", "-c", str(card), "contents"], text=True)
+    try:
+        output = subprocess.check_output(["amixer", "-c", str(card), "contents"], text=True)
+    except subprocess.CalledProcessError:
+        return None
+
     blocks = output.split("numid=")[1:]
     for block in blocks:
         if "ENUMERATED" in block and "Line" in block and "IEC958 In" in block:
-            numid = int(block.split(",")[0])
-            return numid
+            try:
+                numid = int(block.split(",")[0])
+                return numid
+            except (ValueError, IndexError):
+                pass
     return None
 
 
 def get_input_source(card, numid):
-    output = subprocess.check_output(["amixer", "-c", str(card), "cget", f"numid={numid}"], text=True)
-    if "values=0" in output:
+    try:
+        output = subprocess.check_output(["amixer", "-c", str(card), "cget", f"numid={numid}"], text=True)
+        if "values=0" in output:
+            return "Line"
+        return "IEC958 In"
+    except subprocess.CalledProcessError:
         return "Line"
-    return "IEC958 In"
 
 
 def set_input_source(card, numid, source):
     global input_source
     input_source = source
     value = 0 if source == "Line" else 1
-    subprocess.check_call(["amixer", "-c", str(card), "cset", f"numid={numid}", str(value)])
+    try:
+        subprocess.check_call(["amixer", "-c", str(card), "cset", f"numid={numid}", str(value)])
+        _log(f"Set input source to {source}")
+    except subprocess.CalledProcessError as e:
+        _log(f"Failed to set input source: {e}")
 
 
 # ------------------------------------------------------------
@@ -230,7 +271,7 @@ def set_input_source(card, numid, source):
 
 def generate_filename():
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"recording_{ts}.aiff"
+    return f"recording_{ts}.wav"
 
 
 def get_audio_formats(bitdepth):
@@ -247,37 +288,52 @@ def get_audio_formats(bitdepth):
 
 
 # ------------------------------------------------------------
-# RECORDING USING ARECORD
+# RECORDING USING FFMPEG (direct from router)
 # ------------------------------------------------------------
 def start_arecord(filename, fmt):
-    """Launch a dedicated recorder process that reads from the router thread via stdin."""
+    """Launch FFmpeg recorder that ingests raw PCM from the router thread."""
     global ffmpeg_recorder_process, samplerate, channels, is_recording
 
     filepath = os.path.join(RECORDINGS_ROOT, filename)
     _, ffmpeg_fmt = get_audio_formats(bitdepth)
-    pcm_encoder = f"pcm_{ffmpeg_fmt}"
 
+    # Force WAV format for reliability
     rec_cmd = [
         "ffmpeg", "-y",
-        "-f", ffmpeg_fmt, "-ar", str(samplerate), "-ac", str(channels),
+        "-f", ffmpeg_fmt,
+        "-ar", str(samplerate),
+        "-ac", str(channels),
         "-i", "pipe:0",
-        "-c:a", pcm_encoder,
+        "-c:a", "pcm_s16le" if bitdepth == 16 else f"pcm_s{bitdepth}le",
+        "-f", "wav",
         filepath,
     ]
 
-    print(f"Starting recorder: {' '.join(rec_cmd)}")
+    _log(f"FFmpeg command: {' '.join(rec_cmd)}")
+
     ffmpeg_recorder_process = subprocess.Popen(
         rec_cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        bufsize=0,
     )
-    
-    is_recording = True
-    time.sleep(0.1)  # Give ffmpeg time to initialize
-    print(f"Recorder process started (PID {ffmpeg_recorder_process.pid})")
 
-    return {"status": "success", "message": f"Recording started {fmt.upper()}", "path": filepath}
+    is_recording = True
+    time.sleep(0.15)
+
+    if ffmpeg_recorder_process.poll() is not None:
+        # Process already exited — grab stderr
+        exit_code = ffmpeg_recorder_process.returncode
+        stderr = ffmpeg_recorder_process.stderr.read().decode('utf-8', errors='ignore') if ffmpeg_recorder_process.stderr else ""
+        _log(f"FFmpeg exited immediately with code {exit_code}")
+        _log(f"FFmpeg stderr: {stderr[:300]}")
+        ffmpeg_recorder_process = None
+        is_recording = False
+        return {"status": "error", "message": f"FFmpeg failed to start: {stderr[:100]}", "path": filepath}
+
+    _log(f"Recorder started (PID {ffmpeg_recorder_process.pid})")
+    return {"status": "success", "message": f"Recording started (WAV, {samplerate}Hz, {channels}ch, {bitdepth}bit)", "path": filepath}
 
 
 def set_card():
@@ -290,22 +346,25 @@ def set_card():
 
 
 def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
-    global arecord_process, ffmpeg_stream_process, card, device, samplerate, bitdepth, hwcaps, low_bandwidth_fd, audio_router_thread
+    global arecord_process, card, device, samplerate, bitdepth, hwcaps, audio_router_thread
 
     samplerate = _samplerate
     bitdepth = _bitdepth
 
     if card is None or device is None:
+        _log("Cannot start audio engine: no card selected")
         return
 
     alsa_fmt, _ = get_audio_formats(bitdepth)
     device_string = f"hw:{card},{device}"
     channel_count = hwcaps.get("channels", 2)
 
-    for proc in [ffmpeg_stream_process, arecord_process]:
-        if proc and proc.poll() is None:
-            proc.terminate()
-            proc.wait(timeout=2)
+    if arecord_process and arecord_process.poll() is None:
+        arecord_process.terminate()
+        try:
+            arecord_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            arecord_process.kill()
 
     arecord_cmd = [
         "arecord",
@@ -317,25 +376,28 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-",
     ]
 
-    print(f"Starting arecord: {' '.join(arecord_cmd)}")
-    arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
-    print(f"arecord started (PID {arecord_process.pid})")
-
-    ffmpeg_stream_process = None
+    _log(f"arecord command: {' '.join(arecord_cmd)}")
+    arecord_process = subprocess.Popen(
+        arecord_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        bufsize=0
+    )
+    _log(f"arecord started (PID {arecord_process.pid})")
 
     if audio_router_thread is None or not audio_router_thread.is_alive():
         audio_router_thread = threading.Thread(target=_audio_router_loop, daemon=True)
         audio_router_thread.start()
-        print("Audio router thread started")
+        _log("Audio router thread started")
 
-    print("🚀 Audio engine initialized (queue-based routing).")
+    _log("🚀 Audio engine initialized")
 
 
 def stop_continuous_audio_engine():
-    """Stop active engine components without leaving dangling pipes."""
-    global arecord_process, ffmpeg_stream_process, ffmpeg_recorder_process, low_bandwidth_fd, is_recording
+    """Stop active engine components."""
+    global arecord_process, ffmpeg_recorder_process, is_recording
 
-    print("Stopping active audio engine components...")
+    _log("Stopping audio engine...")
 
     if ffmpeg_recorder_process:
         try:
@@ -347,7 +409,7 @@ def stop_continuous_audio_engine():
             ffmpeg_recorder_process.kill()
             ffmpeg_recorder_process.wait()
         except Exception as e:
-            print(f"Error stopping recorder: {e}")
+            _log(f"Error stopping recorder: {e}")
         ffmpeg_recorder_process = None
 
     if arecord_process:
@@ -358,24 +420,13 @@ def stop_continuous_audio_engine():
             arecord_process.kill()
             arecord_process.wait()
         except Exception as e:
-            print(f"Error stopping arecord: {e}")
+            _log(f"Error stopping arecord: {e}")
         arecord_process = None
-
-    if ffmpeg_stream_process:
-        try:
-            ffmpeg_stream_process.terminate()
-            ffmpeg_stream_process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            ffmpeg_stream_process.kill()
-            ffmpeg_stream_process.wait()
-        except Exception as e:
-            print(f"Error stopping ffmpeg stream: {e}")
-        ffmpeg_stream_process = None
 
     is_recording = False
     stream_high_queue.clear()
     stream_low_queue.clear()
-    print("Audio engine stopped")
+    _log("Audio engine stopped")
 
 
 def init_card():
@@ -412,7 +463,8 @@ def index():
 
 @app.route("/api/status")
 def api_status():
-    return jsonify({"recording": bool(ffmpeg_recorder_process and ffmpeg_recorder_process.poll() is None)})
+    recording = bool(ffmpeg_recorder_process and ffmpeg_recorder_process.poll() is None)
+    return jsonify({"recording": recording})
 
 
 def _stream_generator(kind):
@@ -435,14 +487,20 @@ def _stream_generator(kind):
 
 @app.route('/stream.aac')
 def stream_audio():
-    """Live monitor endpoint using buffered PCM, decoupled from the recorder so it cannot block capture."""
+    """Live monitor endpoint using buffered PCM."""
     return Response(_stream_generator("high"), mimetype='audio/aac')
 
 
 @app.route('/low_stream.aac')
 def low_bandwidth_stream():
-    """Low-quality monitor stream with aggressive frame dropping."""
+    """Low-quality monitor stream."""
     return Response(_stream_generator("low"), mimetype='audio/aac')
+
+
+@app.route("/api/logs")
+def api_logs():
+    """Return recent debug logs."""
+    return jsonify({"logs": recorder_log[-50:]})
 
 
 @app.route("/api/start", methods=["POST"])
@@ -470,12 +528,8 @@ def api_start():
         stop_continuous_audio_engine()
         init_continuous_audio_engine(samplerate, bitdepth)
 
-    fmt = Path(filename.lower()).suffix.replace('.', '')
-    if fmt not in ['wav', 'aiff', 'aif']:
-        fmt = 'aif'
-
-    result = start_arecord(filename, fmt)
-    return jsonify({"status": "recording", "filename": filename, **result})
+    result = start_arecord(filename, "wav")
+    return jsonify({"status": "recording" if result["status"] == "success" else "error", "filename": filename, **result})
 
 
 @app.route("/api/stop", methods=["POST"])
@@ -486,6 +540,7 @@ def api_stop():
         return jsonify({"status": "error", "message": "No active recording found"}), 400
 
     is_recording = False
+    _log("Stopping recording...")
 
     try:
         if ffmpeg_recorder_process.stdin:
@@ -496,16 +551,17 @@ def api_stop():
         ffmpeg_recorder_process.kill()
         ffmpeg_recorder_process.wait()
     except Exception as e:
-        print(f"Error stopping recorder: {e}")
+        _log(f"Error stopping recorder: {e}")
     finally:
         ffmpeg_recorder_process = None
 
+    _log("Recording stopped")
     return jsonify({"status": "success", "message": "Recording saved"})
 
 
 @app.route("/api/input", methods=["GET"])
 def api_get_input():
-    global card, device, name, selector_numid, input_source
+    global card, selector_numid, input_source
     if card is None:
         return jsonify({"error": "no capture card"}), 400
 
@@ -517,7 +573,7 @@ def api_get_input():
 
 @app.route("/api/input", methods=["POST"])
 def api_set_input():
-    global card, device, name, selector_numid
+    global card, selector_numid
     if card is None:
         return jsonify({"error": "no capture card"}), 400
 

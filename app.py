@@ -82,7 +82,8 @@ def _audio_router_loop():
 
         try:
             chunk = arecord_process.stdout.read(4096)
-        except Exception:
+        except Exception as e:
+            print(f"Router read error: {e}")
             time.sleep(0.1)
             continue
 
@@ -90,12 +91,17 @@ def _audio_router_loop():
             time.sleep(0.2)
             continue
 
-        # Record to file if active
-        if ffmpeg_recorder_process and ffmpeg_recorder_process.stdin:
-            try:
-                ffmpeg_recorder_process.stdin.write(chunk)
-                ffmpeg_recorder_process.stdin.flush()
-            except (BrokenPipeError, ValueError):
+        # Record to file if active — CRITICAL: write to recorder stdin
+        if is_recording and ffmpeg_recorder_process:
+            if ffmpeg_recorder_process.poll() is None:  # Process still alive
+                try:
+                    ffmpeg_recorder_process.stdin.write(chunk)
+                    ffmpeg_recorder_process.stdin.flush()
+                except (BrokenPipeError, ValueError, AttributeError) as e:
+                    print(f"Recorder write error: {e}")
+                    ffmpeg_recorder_process = None
+            else:
+                print(f"Recorder process died (exit code: {ffmpeg_recorder_process.returncode})")
                 ffmpeg_recorder_process = None
 
         # Feed the monitor streams without blocking the recorder.
@@ -103,7 +109,7 @@ def _audio_router_loop():
             _enqueue_stream_chunk(chunk, low_quality=False)
             _enqueue_stream_chunk(chunk[: max(1, len(chunk) // 2)], low_quality=True)
 
-        time.sleep(0.01)
+        time.sleep(0.001)
 
 
 # ------------------------------------------------------------
@@ -244,15 +250,12 @@ def get_audio_formats(bitdepth):
 # RECORDING USING ARECORD
 # ------------------------------------------------------------
 def start_arecord(filename, fmt):
-    """Launch a dedicated recorder process that reads from the same PCM stream without using a blocking FFmpeg tee."""
+    """Launch a dedicated recorder process that reads from the router thread via stdin."""
     global ffmpeg_recorder_process, samplerate, channels, is_recording
 
     filepath = os.path.join(RECORDINGS_ROOT, filename)
     _, ffmpeg_fmt = get_audio_formats(bitdepth)
     pcm_encoder = f"pcm_{ffmpeg_fmt}"
-
-    is_recording = True
-    time.sleep(0.05)
 
     rec_cmd = [
         "ffmpeg", "-y",
@@ -262,12 +265,17 @@ def start_arecord(filename, fmt):
         filepath,
     ]
 
+    print(f"Starting recorder: {' '.join(rec_cmd)}")
     ffmpeg_recorder_process = subprocess.Popen(
         rec_cmd,
         stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    
+    is_recording = True
+    time.sleep(0.1)  # Give ffmpeg time to initialize
+    print(f"Recorder process started (PID {ffmpeg_recorder_process.pid})")
 
     return {"status": "success", "message": f"Recording started {fmt.upper()}", "path": filepath}
 
@@ -309,15 +317,18 @@ def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
         "-",
     ]
 
+    print(f"Starting arecord: {' '.join(arecord_cmd)}")
     arecord_process = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+    print(f"arecord started (PID {arecord_process.pid})")
 
     ffmpeg_stream_process = None
 
     if audio_router_thread is None or not audio_router_thread.is_alive():
         audio_router_thread = threading.Thread(target=_audio_router_loop, daemon=True)
         audio_router_thread.start()
+        print("Audio router thread started")
 
-    print("🚀 Audio engine started without tee-blocking stream splitting.")
+    print("🚀 Audio engine initialized (queue-based routing).")
 
 
 def stop_continuous_audio_engine():
@@ -328,10 +339,15 @@ def stop_continuous_audio_engine():
 
     if ffmpeg_recorder_process:
         try:
+            if ffmpeg_recorder_process.stdin:
+                ffmpeg_recorder_process.stdin.close()
             ffmpeg_recorder_process.terminate()
             ffmpeg_recorder_process.wait(timeout=2)
         except subprocess.TimeoutExpired:
             ffmpeg_recorder_process.kill()
+            ffmpeg_recorder_process.wait()
+        except Exception as e:
+            print(f"Error stopping recorder: {e}")
         ffmpeg_recorder_process = None
 
     if arecord_process:
@@ -340,6 +356,9 @@ def stop_continuous_audio_engine():
             arecord_process.wait(timeout=2)
         except subprocess.TimeoutExpired:
             arecord_process.kill()
+            arecord_process.wait()
+        except Exception as e:
+            print(f"Error stopping arecord: {e}")
         arecord_process = None
 
     if ffmpeg_stream_process:
@@ -348,11 +367,15 @@ def stop_continuous_audio_engine():
             ffmpeg_stream_process.wait(timeout=2)
         except subprocess.TimeoutExpired:
             ffmpeg_stream_process.kill()
+            ffmpeg_stream_process.wait()
+        except Exception as e:
+            print(f"Error stopping ffmpeg stream: {e}")
         ffmpeg_stream_process = None
 
     is_recording = False
     stream_high_queue.clear()
     stream_low_queue.clear()
+    print("Audio engine stopped")
 
 
 def init_card():
@@ -462,15 +485,20 @@ def api_stop():
     if not ffmpeg_recorder_process or ffmpeg_recorder_process.poll() is not None:
         return jsonify({"status": "error", "message": "No active recording found"}), 400
 
+    is_recording = False
+
     try:
+        if ffmpeg_recorder_process.stdin:
+            ffmpeg_recorder_process.stdin.close()
         ffmpeg_recorder_process.terminate()
         ffmpeg_recorder_process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         ffmpeg_recorder_process.kill()
         ffmpeg_recorder_process.wait()
+    except Exception as e:
+        print(f"Error stopping recorder: {e}")
     finally:
         ffmpeg_recorder_process = None
-        is_recording = False
 
     return jsonify({"status": "success", "message": "Recording saved"})
 

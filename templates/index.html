@@ -344,32 +344,19 @@
 
     <!-- CARD LIST -->
     <div class="section">
-        <h2>Detected Capture Cards</h2>
+        <h2>Capture Card</h2>
 
-        <ul>
+        <select id="cardSelect" onchange="setCard()" {% if cards|length <= 1 %}disabled{% endif %}>
+            {% if not cards %}
+                <option value="">No capture cards found</option>
+            {% endif %}
             {% for c in cards %}
-                <li>
-                    Card {{ c.card }}, device {{ c.device }} — {{ c.name }}
-                    {% if c.card == selected_card %}
-                        <strong>(selected)</strong>
-                    {% endif %}
-                </li>
+                <option value="{{ c.card }}" data-device="{{ c.device }}"
+                    {% if c.card == selected_card and c.device == selected_device %}selected{% endif %}>
+                    {{ c.name }} (card {{ c.card }}, device {{ c.device }})
+                </option>
             {% endfor %}
-        </ul>
-        
-        <select id="cardSelect"></select>
-        <button onclick="setCard()">Select Card</button>
-
-        <div class="info-box">
-            <p>
-                Current capture device:
-                {% if selected_card is not none %}
-                    <strong>card {{ selected_card }}, device {{ selected_device }} — {{ selected_name }}</strong>
-                {% else %}
-                    <strong>none</strong>
-                {% endif %}
-            </p>
-        </div>
+        </select>
     </div>
 
     <!-- SPDIF / LINE SELECTOR -->
@@ -419,8 +406,8 @@
 
         <label>File format:</label><br>
         <select id="fileFormat">
-            <option value="wav" selected>WAV (PCM)</option>
-            <option value="aiff">AIFF (PCM, metadata-ready)</option>
+            <option value="aiff" selected>AIFF (PCM, metadata-ready)</option>
+            <option value="wav">WAV (PCM)</option>
         </select>
     </div>
 
@@ -442,10 +429,10 @@
 
         <div class="stream-controls">
             <button id="qualityHighBtn" class="active" onclick="switchQuality('high')">
-                Studio (WAV PCM)
+                Studio (lossless PCM)
             </button>
             <button id="qualityLowBtn" onclick="switchQuality('low')">
-                Low bandwidth (256 kbps AAC)
+                Low bandwidth (16-bit PCM)
             </button>
             <button id="stopStreamBtn" onclick="stopStream()">
                 Stop Stream
@@ -501,11 +488,7 @@ function stopPcmPlayer() {
     if (!pcmPlayer) return;
     pcmPlayer.stopped = true;
     try { if (pcmPlayer.abort) pcmPlayer.abort.abort(); } catch (e) {}
-    try {
-        if (pcmPlayer.sources) {
-            pcmPlayer.sources.forEach(s => { try { s.stop(); } catch (e) {} });
-        }
-    } catch (e) {}
+    try { if (pcmPlayer.sink) pcmPlayer.sink.close(); } catch (e) {}
     try { if (pcmPlayer.ctx) pcmPlayer.ctx.close(); } catch (e) {}
     pcmPlayer = null;
 }
@@ -540,21 +523,15 @@ function parseWavHeader(u8) {
     return { ...fmt, dataOffset };
 }
 
-function pcmChunkToAudioBuffer(ctx, bytes, channels, bitDepth, sampleRate) {
+/** Interleaved little-endian PCM bytes -> one Float32Array per channel. */
+function pcmToPlanar(bytes, channels, bitDepth) {
     const width = bitDepth >> 3;
     const frame = width * channels;
     const n = Math.floor(bytes.length / frame);
-    if (n < 1) return null;
-    const full = 1 << (bitDepth - 1);
-    let outBuf;
-    try {
-        outBuf = ctx.createBuffer(channels, n, sampleRate);
-    } catch (e) {
-        // Older Safari: buffer rate must match the context (may resample).
-        outBuf = ctx.createBuffer(channels, n, ctx.sampleRate);
-    }
+    const full = 2 ** (bitDepth - 1);
+    const planar = [];
     for (let c = 0; c < channels; c++) {
-        const chData = outBuf.getChannelData(c);
+        const out = new Float32Array(n);
         let o = c * width;
         for (let i = 0; i < n; i++) {
             let v;
@@ -567,148 +544,311 @@ function pcmChunkToAudioBuffer(ctx, bytes, channels, bitDepth, sampleRate) {
             } else {
                 v = bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16) | (bytes[o + 3] << 24);
             }
-            chData[i] = v / full;
+            out[i] = v / full;
             o += frame;
         }
+        planar.push(out);
     }
-    return outBuf;
+    return planar;
 }
 
-async function startPcmPlayer(url) {
-    stopPcmPlayer();
+/** Streaming linear resampler, only used if the AudioContext cannot run at the stream rate. */
+class PcmResampler {
+    constructor(channels, srcRate, dstRate) {
+        this.step = srcRate / dstRate;
+        this.last = new Float32Array(channels);
+        this.pos = 1; // index into [last, ...chunk]
+    }
+    process(planar) {
+        const n = planar[0].length;
+        const cap = Math.ceil(n / this.step) + 2;
+        const out = planar.map(() => new Float32Array(cap));
+        let p = this.pos;
+        let m = 0;
+        while (Math.floor(p) + 1 <= n) {
+            const i = Math.floor(p);
+            const f = p - i;
+            for (let c = 0; c < planar.length; c++) {
+                const a = i === 0 ? this.last[c] : planar[c][i - 1];
+                const b = planar[c][i];
+                out[c][m] = a + (b - a) * f;
+            }
+            m++;
+            p += this.step;
+        }
+        this.pos = p - n;
+        for (let c = 0; c < planar.length; c++) this.last[c] = planar[c][n - 1];
+        return out.map(a => a.subarray(0, m));
+    }
+}
+
+/**
+ * Jitter buffer. The audio thread pulls a fixed amount every callback, so network
+ * jitter never makes playback stutter as long as the buffer holds. Also embedded
+ * (via toString) into the AudioWorklet, so it must stay self-contained.
+ * On underrun it outputs silence and refills to a slightly larger target; if the
+ * buffer grows too large (network burst) it drops the oldest audio to cap latency.
+ */
+class PcmRing {
+    constructor(channels, capFrames, targetFrames, maxTargetFrames, headroomFrames) {
+        this.ch = channels;
+        this.cap = capFrames;
+        this.buf = [];
+        for (let c = 0; c < channels; c++) this.buf.push(new Float32Array(capFrames));
+        this.r = 0;
+        this.w = 0;
+        this.fill = 0;
+        this.primed = false;
+        this.target = targetFrames;
+        this.maxTarget = maxTargetFrames;
+        this.headroom = headroomFrames;
+        this.underruns = 0;
+        this.dropped = 0;
+    }
+    push(planar) {
+        let n = planar[0].length;
+        let start = 0;
+        const limit = this.target + this.headroom;
+        if (n > limit) { start = n - limit; n = limit; }
+        if (this.fill + n > limit) {
+            const drop = Math.min(this.fill, this.fill + n - this.target);
+            this.r = (this.r + drop) % this.cap;
+            this.fill -= drop;
+            this.dropped += drop;
+        }
+        for (let c = 0; c < this.ch; c++) {
+            const src = planar[Math.min(c, planar.length - 1)];
+            const dst = this.buf[c];
+            let w = this.w;
+            for (let i = 0; i < n; i++) {
+                dst[w] = src[start + i];
+                if (++w === this.cap) w = 0;
+            }
+        }
+        this.w = (this.w + n) % this.cap;
+        this.fill += n;
+    }
+    pull(out) {
+        const n = out[0].length;
+        if (!this.primed) {
+            if (this.fill < this.target) {
+                for (const o of out) o.fill(0);
+                return;
+            }
+            this.primed = true;
+        }
+        const take = Math.min(n, this.fill);
+        for (let c = 0; c < out.length; c++) {
+            const src = this.buf[Math.min(c, this.ch - 1)];
+            const dst = out[c];
+            let r = this.r;
+            for (let i = 0; i < take; i++) {
+                dst[i] = src[r];
+                if (++r === this.cap) r = 0;
+            }
+            for (let i = take; i < n; i++) dst[i] = 0;
+        }
+        this.r = (this.r + take) % this.cap;
+        this.fill -= take;
+        if (take < n) {
+            this.primed = false;
+            this.underruns++;
+            this.target = Math.min(this.maxTarget, this.target + Math.floor(this.target * 0.25));
+        }
+    }
+}
+
+const PCM_WORKLET_SRC = `
+${PcmRing.toString()}
+registerProcessor("pcm-ring", class extends AudioWorkletProcessor {
+    constructor(options) {
+        super();
+        const p = options.processorOptions;
+        this.ring = new PcmRing(p.channels, p.cap, p.target, p.maxTarget, p.headroom);
+        this.ticks = 0;
+        this.port.onmessage = (e) => this.ring.push(e.data);
+    }
+    process(inputs, outputs) {
+        this.ring.pull(outputs[0]);
+        if (++this.ticks % 150 === 0) {
+            this.port.postMessage({ fill: this.ring.fill, underruns: this.ring.underruns, dropped: this.ring.dropped });
+        }
+        return true;
+    }
+});`;
+
+/** Build an output sink: AudioWorklet where available (secure context), else ScriptProcessor. */
+async function createPcmSink(ctx, channels, rate, onStats) {
+    const isIOS = needsWebAudioPcm();
+    const targetS = isIOS ? 0.45 : 0.2;
+    const params = {
+        channels,
+        cap: Math.ceil(rate * 4),
+        target: Math.ceil(rate * targetS),
+        maxTarget: Math.ceil(rate * 1.2),
+        headroom: Math.ceil(rate * 0.8),
+    };
+
+    if (ctx.audioWorklet && typeof AudioWorkletNode !== "undefined") {
+        const url = URL.createObjectURL(new Blob([PCM_WORKLET_SRC], { type: "application/javascript" }));
+        try {
+            await ctx.audioWorklet.addModule(url);
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+        const node = new AudioWorkletNode(ctx, "pcm-ring", {
+            numberOfInputs: 0,
+            numberOfOutputs: 1,
+            outputChannelCount: [channels],
+            processorOptions: params,
+        });
+        node.port.onmessage = (e) => onStats(e.data.fill / rate, e.data.underruns, e.data.dropped);
+        node.connect(ctx.destination);
+        return {
+            kind: "worklet",
+            push: (planar) => node.port.postMessage(planar, planar.map(a => a.buffer)),
+            close: () => { try { node.disconnect(); node.port.close(); } catch (e) {} },
+        };
+    }
+
+    // Plain-HTTP pages (e.g. http://<pi-ip>:5000) have no AudioWorklet in Safari.
+    const ring = new PcmRing(channels, params.cap, params.target, params.maxTarget, params.headroom);
+    const node = ctx.createScriptProcessor(2048, 0, channels);
+    let ticks = 0;
+    node.onaudioprocess = (ev) => {
+        const out = [];
+        for (let c = 0; c < channels; c++) out.push(ev.outputBuffer.getChannelData(c));
+        ring.pull(out);
+        if (++ticks % 25 === 0) onStats(ring.fill / rate, ring.underruns, ring.dropped);
+    };
+    node.connect(ctx.destination);
+    return {
+        kind: "script",
+        push: (planar) => ring.push(planar),
+        close: () => { try { node.disconnect(); node.onaudioprocess = null; } catch (e) {} },
+    };
+}
+
+/**
+ * Create + unlock the AudioContext. Call synchronously from the click handler:
+ * iOS only lets audio start inside a user gesture.
+ */
+function createPcmContext(sampleRate) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) throw new Error("Web Audio not available");
+    let ctx;
+    try {
+        ctx = new AC({ sampleRate: Number(sampleRate) || undefined, latencyHint: "playback" });
+    } catch (e) {
+        ctx = new AC();
+    }
+    ctx.resume().catch(() => {});
+    return ctx;
+}
 
+async function startPcmPlayer(url, ctx) {
+    stopPcmPlayer();
     const abort = new AbortController();
-    const ctx = new AC();
-    await ctx.resume();
+    ctx = ctx || createPcmContext(null);
 
-    pcmPlayer = {
+    const player = {
         ctx,
         abort,
         stopped: false,
-        sources: [],
-        nextTime: 0,
+        sink: null,
+        resampler: null,
         sampleRate: 48000,
         channels: 2,
         bitDepth: 24,
         leftover: new Uint8Array(0),
         headerDone: false,
-        started: false,
-        pending: [], // AudioBuffers waiting for preroll
-        pendingSecs: 0,
+        statsText: "",
     };
+    pcmPlayer = player;
 
-    const PREROLL_S = 0.35;   // buffer before audible start — avoids early underruns
-    const BLOCK_S = 0.1;      // schedule in ~100ms chunks
-    const MIN_AHEAD_S = 0.15; // keep this much queued ahead of the playhead
-
-    const scheduleBuf = (audioBuf) => {
-        if (!pcmPlayer || pcmPlayer.stopped || !audioBuf) return;
-        const src = ctx.createBufferSource();
-        src.buffer = audioBuf;
-        src.connect(ctx.destination);
-        const now = ctx.currentTime;
-        // If we fell behind, resume immediately without inserting a long silence gap.
-        if (pcmPlayer.nextTime < now + 0.02) {
-            pcmPlayer.nextTime = now + 0.02;
+    // iOS suspends/interrupts the context (lock screen, calls, route changes).
+    ctx.onstatechange = () => {
+        if (!player.stopped && ctx.state !== "running" && ctx.state !== "closed") {
+            ctx.resume().catch(() => {});
         }
-        src.start(pcmPlayer.nextTime);
-        pcmPlayer.nextTime += audioBuf.duration;
-        pcmPlayer.sources.push(src);
-        if (pcmPlayer.sources.length > 48) {
-            pcmPlayer.sources.splice(0, 16);
-        }
-    };
-
-    const flushPending = (force) => {
-        if (!pcmPlayer.started) {
-            if (!force && pcmPlayer.pendingSecs < PREROLL_S) return;
-            pcmPlayer.started = true;
-            pcmPlayer.nextTime = ctx.currentTime + 0.05;
-        }
-        while (pcmPlayer.pending.length) {
-            const ahead = pcmPlayer.nextTime - ctx.currentTime;
-            if (!force && ahead > MIN_AHEAD_S + BLOCK_S) break;
-            scheduleBuf(pcmPlayer.pending.shift());
-        }
-        // Recompute pendingSecs roughly
-        pcmPlayer.pendingSecs = pcmPlayer.pending.reduce((s, b) => s + b.duration, 0);
     };
 
     const res = await fetch(url, { signal: abort.signal, cache: "no-store" });
     if (!res.ok || !res.body) throw new Error("PCM stream HTTP " + res.status);
     const reader = res.body.getReader();
 
+    const onStats = (bufSecs, underruns, dropped) => {
+        if (player.stopped) return;
+        player.statsText = ` · buffer ${Math.round(bufSecs * 1000)} ms · gaps ${underruns}` +
+            (dropped ? ` · skipped ${Math.round(dropped / player.sampleRate * 1000)} ms` : "");
+        const el = document.getElementById("streamStatusText");
+        if (el && currentStreamUrl) el.textContent = el.textContent.replace(/ · buffer.*$/, "") + player.statsText;
+    };
+
+    // Returns when the WAV header was parsed and the sink exists.
+    const handle = async (value) => {
+        let chunk = value;
+        if (player.leftover.length) {
+            const merged = new Uint8Array(player.leftover.length + chunk.length);
+            merged.set(player.leftover);
+            merged.set(chunk, player.leftover.length);
+            chunk = merged;
+            player.leftover = new Uint8Array(0);
+        }
+
+        if (!player.headerDone) {
+            const hdr = parseWavHeader(chunk);
+            if (!hdr) {
+                if (chunk.length < 128) {
+                    player.leftover = chunk;
+                    return;
+                }
+                throw new Error("Invalid WAV header");
+            }
+            player.sampleRate = hdr.sampleRate;
+            player.channels = hdr.channels;
+            player.bitDepth = hdr.bitDepth;
+            if (![16, 24, 32].includes(hdr.bitDepth)) throw new Error("Unsupported bit depth " + hdr.bitDepth);
+            if (ctx.sampleRate !== hdr.sampleRate) {
+                player.resampler = new PcmResampler(hdr.channels, hdr.sampleRate, ctx.sampleRate);
+            }
+            player.sink = await createPcmSink(ctx, hdr.channels, ctx.sampleRate, onStats);
+            player.headerDone = true;
+            chunk = chunk.subarray(hdr.dataOffset);
+        }
+
+        const frame = (player.bitDepth >> 3) * player.channels;
+        const usable = Math.floor(chunk.length / frame) * frame;
+        if (usable < chunk.length) {
+            player.leftover = chunk.slice(usable);
+        }
+        if (usable < frame) return;
+        let planar = pcmToPlanar(chunk.subarray(0, usable), player.channels, player.bitDepth);
+        if (player.resampler) planar = player.resampler.process(planar);
+        if (planar[0].length) player.sink.push(planar);
+    };
+
+    // Read until the header is handled so callers know playback is wired up.
+    while (!player.headerDone) {
+        const { done, value } = await reader.read();
+        if (done) throw new Error("PCM stream ended before header");
+        if (value && value.length) await handle(value);
+    }
+
     const pump = async () => {
-        while (pcmPlayer && !pcmPlayer.stopped) {
+        while (!player.stopped) {
             const { done, value } = await reader.read();
             if (done) break;
-            if (!value || !value.length) continue;
-
-            let chunk = value;
-            if (pcmPlayer.leftover.length) {
-                const merged = new Uint8Array(pcmPlayer.leftover.length + chunk.length);
-                merged.set(pcmPlayer.leftover);
-                merged.set(chunk, pcmPlayer.leftover.length);
-                chunk = merged;
-                pcmPlayer.leftover = new Uint8Array(0);
-            }
-
-            if (!pcmPlayer.headerDone) {
-                const hdr = parseWavHeader(chunk);
-                if (!hdr) {
-                    if (chunk.length < 128) {
-                        pcmPlayer.leftover = chunk;
-                        continue;
-                    }
-                    throw new Error("Invalid WAV header");
-                }
-                pcmPlayer.sampleRate = hdr.sampleRate;
-                pcmPlayer.channels = hdr.channels;
-                pcmPlayer.bitDepth = hdr.bitDepth;
-                pcmPlayer.headerDone = true;
-                chunk = chunk.subarray(hdr.dataOffset);
-            }
-
-            const width = pcmPlayer.bitDepth >> 3;
-            const frame = width * pcmPlayer.channels;
-            const usable = Math.floor(chunk.length / frame) * frame;
-            if (usable < frame) {
-                pcmPlayer.leftover = chunk;
-                continue;
-            }
-            if (usable < chunk.length) {
-                pcmPlayer.leftover = chunk.subarray(usable);
-            }
-            const pcm = chunk.subarray(0, usable);
-            const blockBytes = frame * Math.max(256, Math.floor(pcmPlayer.sampleRate * BLOCK_S));
-            for (let off = 0; off + frame <= pcm.length; ) {
-                const take = Math.min(blockBytes, pcm.length - off);
-                const aligned = Math.floor(take / frame) * frame;
-                if (aligned < frame) break;
-                const slice = pcm.subarray(off, off + aligned);
-                off += aligned;
-                const audioBuf = pcmChunkToAudioBuffer(
-                    ctx, slice, pcmPlayer.channels, pcmPlayer.bitDepth, pcmPlayer.sampleRate
-                );
-                if (!audioBuf) continue;
-                pcmPlayer.pending.push(audioBuf);
-                pcmPlayer.pendingSecs += audioBuf.duration;
-                // Cap pending queue (~1s) so a long Wi‑Fi pause doesn't build huge latency.
-                while (pcmPlayer.pendingSecs > 1.0 && pcmPlayer.pending.length > 1) {
-                    const dropped = pcmPlayer.pending.shift();
-                    pcmPlayer.pendingSecs -= dropped.duration;
-                }
-            }
-            flushPending(false);
+            if (value && value.length) await handle(value);
         }
-        flushPending(true);
+        if (!player.stopped) {
+            flash("Monitor stream ended", "error");
+            updateStreamStatus(false, null);
+        }
     };
 
     pump().catch(e => {
-        if (!pcmPlayer || pcmPlayer.stopped) return;
-        if (e.name === "AbortError") return;
+        if (player.stopped || e.name === "AbortError") return;
         console.error("PCM Web Audio error:", e);
         flash("PCM monitor error: " + (e.message || e), "error");
         updateStreamStatus(false, null);
@@ -729,7 +869,10 @@ document.getElementById("samplerate").addEventListener("change", e => {
     }
 });
 
+let pollStatusInFlight = false;
 function pollStatus() {
+    if (pollStatusInFlight) return;
+    pollStatusInFlight = true;
     fetch("/api/status")
         .then(r => r.json())
         .then(data => {
@@ -748,7 +891,10 @@ function pollStatus() {
                 updateSinkMonitorUi();
             }
         })
-        .catch(e => console.error("Status poll error:", e));
+        .catch(e => console.error("Status poll error:", e))
+        .finally(() => {
+            pollStatusInFlight = false;
+        });
 }
 
 function refreshInputSource() {
@@ -786,14 +932,22 @@ function setInputSource() {
 }
 
 function setCard() {
-    const card = parseInt(document.getElementById("cardSelect").value);
-    const device = 0;
+    const sel = document.getElementById("cardSelect");
+    const card = parseInt(sel.value);
+    if (isNaN(card)) return;
+    const device = parseInt(sel.selectedOptions[0].dataset.device || "0");
 
     fetch("/api/select_card", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({card, device})
-    }).then(() => loadCaps());
+    }).then(r => {
+        if (!r.ok) {
+            r.json().then(d => flash(d.error || "Card change refused", "error")).catch(() => {});
+            return;
+        }
+        loadCaps();
+    });
 }
 
 function startRecording() {
@@ -938,19 +1092,6 @@ function loadCaps() {
         });
 }
 
-function populateCardDropdown(cards) {
-    const sel = document.getElementById("cardSelect");
-    sel.innerHTML = "";
-
-    cards.forEach(c => {
-        const opt = document.createElement("option");
-        opt.value = c.card;
-        opt.textContent = `${c.name} (card ${c.card}, device ${c.device})`;
-        opt.dataset.device = c.device;
-        sel.appendChild(opt);
-    });
-}
-
 function switchQuality(quality) {
     currentQuality = quality;
 
@@ -961,53 +1102,37 @@ function switchQuality(quality) {
     const samplerate = document.getElementById("samplerate").value;
     const bitdepth = document.getElementById("bitdepth").value;
     const qs = `samplerate=${samplerate}&bitdepth=${bitdepth}&t=${Date.now()}`;
-    const endpoint = quality === "high" ? `/stream.wav?${qs}` : `/low_stream.aac?${qs}`;
+    const endpoint = quality === "high" ? `/stream.wav?${qs}` : `/stream16.wav?${qs}`;
     const player = document.getElementById("audioPlayer");
     const statusText = document.getElementById("streamStatusText");
-    const useWebAudio = quality === "high" && needsWebAudioPcm();
 
     // Stop current stream if any
     stopStream();
     statusText.textContent = "Stream: Connecting…";
 
+    // iOS only starts audio from inside the tap handler, so create the context now,
+    // before the async warm-up below.
+    let ctx = null;
+    try {
+        ctx = createPcmContext(samplerate);
+    } catch (e) {
+        flash(e.message || "Web Audio not available", "error");
+        updateStreamStatus(false, quality);
+        return;
+    }
+
     // Warm capture first so we do not pay an arecord restart on the stream request.
     warmupEngine().finally(() => {
         currentStreamUrl = endpoint;
-        if (useWebAudio) {
-            // iOS/Safari: lossless PCM via Web Audio (native <audio> rejects live WAV).
-            startPcmPlayer(endpoint)
-                .then(() => {
-                    updateStreamStatus(true, quality);
-                    flash("Studio PCM via Web Audio (lossless)", "ok");
-                })
-                .catch(e => {
-                    console.error("PCM Web Audio play error:", e);
-                    flash(e.message || "PCM monitor failed", "error");
-                    updateStreamStatus(false, quality);
-                });
-            return;
-        }
-        player.src = currentStreamUrl;
-        player.play()
+        startPcmPlayer(endpoint, ctx)
             .then(() => {
                 updateStreamStatus(true, quality);
+                flash(quality === "high" ? "Studio PCM (lossless)" : "Low-bandwidth PCM (16-bit)", "ok");
             })
             .catch(e => {
-                console.error("Stream play error:", e);
-                // Fallback: if WAV fails in <audio>, try Web Audio PCM path.
-                if (quality === "high") {
-                    startPcmPlayer(endpoint)
-                        .then(() => {
-                            updateStreamStatus(true, quality);
-                            flash("Studio PCM via Web Audio (lossless)", "ok");
-                        })
-                        .catch(err => {
-                            flash(err.message || "Stream failed", "error");
-                            updateStreamStatus(false, quality);
-                        });
-                } else {
-                    updateStreamStatus(false, quality);
-                }
+                console.error("PCM Web Audio play error:", e);
+                flash(e.message || "PCM monitor failed", "error");
+                updateStreamStatus(false, quality);
             });
     });
 }
@@ -1029,11 +1154,8 @@ function updateStreamStatus(isActive, quality) {
 
     if (isActive) {
         indicator.classList.add("active");
-        let qualityLabel = quality === "high" ? "WAV PCM" : "256 kbps AAC";
-        if (quality === "high" && pcmPlayer) {
-            qualityLabel = "PCM lossless (Web Audio)";
-        }
-        statusText.textContent = `Stream: LIVE (${qualityLabel})`;
+        let qualityLabel = quality === "high" ? "PCM lossless" : "PCM 16-bit";
+        statusText.textContent = `Stream: LIVE (${qualityLabel})` + (pcmPlayer ? pcmPlayer.statsText : "");
     } else {
         indicator.classList.remove("active");
         statusText.textContent = "Stream: Idle";
@@ -1089,8 +1211,6 @@ window.onload = function() {
         .then(cards => {
             if (cards.length === 1) {
                 loadCaps();
-            } else {
-                populateCardDropdown(cards);
             }
         });
 
@@ -1105,7 +1225,9 @@ window.onload = function() {
         updateStreamStatus(true, currentQuality);
     });
     player.addEventListener("pause", () => {
-        updateStreamStatus(false, null);
+        if (!pcmPlayer) {
+            updateStreamStatus(false, null);
+        }
     });
     player.addEventListener("error", (e) => {
         console.error("Audio player error:", e);

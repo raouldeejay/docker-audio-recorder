@@ -101,6 +101,12 @@ Recordings are saved to `./recordings/` on the host machine. This directory is m
 ## Future Enhancements
 
 - [ ] Metadata support (title, artist, description)
+- [ ] Discogs integration: look up a release and read metadata (artist, title, label, year, track list) to tag files and suggest folder/file names, similar to Kid3's Discogs import
+- [ ] Phase scope display (stereo correlation / goniometer) in the live monitor
+- [ ] Click and pop identification, with markers placed at detected clicks
+- [ ] Marker export for Audacity (label track) and Ableton Live (locators / warp markers)
+- [ ] Waveform display of the live input and finished recordings
+- [ ] Suggested auto-splitting into tracks based on Discogs release info (track durations), with manual adjustment before splitting
 - [ ] Audio format conversion (MP3, FLAC)
 - [ ] Recording scheduling
 - [ ] Audio playback in web interface

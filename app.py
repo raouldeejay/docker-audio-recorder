@@ -16,6 +16,7 @@ from collections import deque
 from pathlib import Path
 
 from flask import Flask, render_template, request, jsonify, Response
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
@@ -26,6 +27,9 @@ wav_recorder = None  # bit-perfect WavRecorder (not FFmpeg — avoids requantiza
 record_write_queue = None
 record_writer_thread = None
 record_writer_stop = threading.Event()
+# Serializes capture (re)starts against recording start so a monitor request can
+# never restart arecord underneath a recording.
+engine_lock = threading.RLock()
 # Temporary A/B: record with standalone `arecord -t wav` (no monitor pipe/fan-out).
 RECORD_ONLY_MODE = False
 direct_record_process = None
@@ -74,7 +78,8 @@ is_recording = False
 recorder_log = []
 # Leftover PCM bytes when a read is not a multiple of the frame size (e.g. 24-bit).
 pcm_read_leftover = b""
-MONITOR_QUEUE_MAXLEN = 240  # more headroom for WAV/PCM clients on Wi‑Fi
+# ~25 ms chunks: 80 ≈ 2 s. A longer backlog turns a Wi‑Fi stall into seconds of lag.
+MONITOR_QUEUE_MAXLEN = 80
 # Straight `arecord -t wav file` never blocks on a slow consumer. Pipe+Python can —
 # large pipe/ALSA buffer + a drain-only reader avoid overrun warble.
 CAPTURE_PIPE_BYTES = 1024 * 1024
@@ -428,19 +433,21 @@ def _audio_router_loop():
             except Exception as e:
                 _log(f"Recorder queue error: {e}")
 
-        # PipeWire sink monitor (bounded — drops oldest to keep latency low).
-        q = sink_pcm_queue
-        if sink_monitor_enabled and q is not None:
-            q.append(chunk)
+        # Monitor work is best-effort: nothing here may ever stop the router (and
+        # with it the recorder feed).
+        try:
+            q = sink_pcm_queue
+            if sink_monitor_enabled and q is not None:
+                q.append(chunk)
 
-        # Fan-out first (never skip — non-blocking lock used to drop monitor
-        # chunks under contention and caused stream stalls/reconnects).
-        with monitor_listeners_lock:
-            listeners = list(monitor_listeners)
-        for bucket in listeners:
-            bucket.append(chunk)
+            with monitor_listeners_lock:
+                listeners = list(monitor_listeners)
+            for bucket in listeners:
+                bucket.append(chunk)
 
-        _update_levels_from_pcm(chunk, depth, ch)
+            _update_levels_from_pcm(chunk, depth, ch)
+        except Exception as e:
+            _log(f"Monitor fan-out error (recording unaffected): {e}")
 
 
 def _lin_to_db(x):
@@ -676,12 +683,76 @@ def set_input_source(card, numid, source):
 # FILENAME GENERATION
 # ------------------------------------------------------------
 
-def generate_filename(ext="wav"):
+def generate_filename(ext="aiff"):
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    ext = (ext or "wav").lstrip(".").lower()
+    ext = (ext or "aiff").lstrip(".").lower()
     if ext == "aif":
         ext = "aiff"
     return f"recording_{ts}.{ext}"
+
+
+def clean_recording_filename(filename, file_format):
+    """Return a safe, canonical recording filename and its format."""
+    filename = filename.strip()
+    if not filename:
+        ext = "aiff" if file_format == "aiff" else "wav"
+        return generate_filename(ext), file_format
+
+    lower = filename.lower()
+    if lower.endswith(".aif"):
+        filename = filename[:-4]
+        file_format = "aiff"
+    elif lower.endswith(".aiff"):
+        filename = filename[:-5]
+        file_format = "aiff"
+    elif lower.endswith(".wav"):
+        filename = filename[:-4]
+        file_format = "wav"
+
+    ext = "aiff" if file_format == "aiff" else "wav"
+    # Each "/" separated part is sanitized on its own, so "." / ".." can never survive.
+    parts = [secure_filename(p) for p in re.split(r"[\\/]+", filename)]
+    parts = [p for p in parts if p]
+    if not parts:
+        raise ValueError("Filename must contain at least one letter or number")
+    if len(parts) > 8:
+        raise ValueError("Too many folder levels (maximum 7)")
+    if any(len(p) > 255 - len(ext) - 1 for p in parts):
+        raise ValueError("Filename is too long (maximum 255 characters per part)")
+
+    return "/".join(parts[:-1] + [f"{parts[-1]}.{ext}"]), file_format
+
+
+def resolve_recording_path(relname):
+    """Create parent folders under RECORDINGS_ROOT and return a collision-free relative name.
+
+    Existing files are never overwritten (suffix _1, _2, ...). A folder part that
+    clashes with an existing file gets a suffix too.
+    """
+    root = os.path.realpath(RECORDINGS_ROOT)
+    parts = relname.split("/")
+    current = root
+    resolved = []
+    for part in parts[:-1]:
+        candidate, n = part, 0
+        while os.path.exists(os.path.join(current, candidate)) and not os.path.isdir(
+            os.path.join(current, candidate)
+        ):
+            n += 1
+            candidate = f"{part}_{n}"
+        current = os.path.join(current, candidate)
+        resolved.append(candidate)
+    if os.path.commonpath([root, os.path.realpath(current)]) != root:
+        raise ValueError("Invalid recording path")
+    os.makedirs(current, exist_ok=True)
+
+    stem, ext = os.path.splitext(parts[-1])
+    candidate, n = parts[-1], 0
+    while os.path.exists(os.path.join(current, candidate)):
+        n += 1
+        candidate = f"{stem}_{n}{ext}"
+    resolved.append(candidate)
+    return "/".join(resolved)
 
 
 def get_audio_formats(bitdepth):
@@ -698,10 +769,10 @@ def get_audio_formats(bitdepth):
 
 
 def _normalize_file_format(fmt):
-    fmt = (fmt or "wav").strip().lower().lstrip(".")
-    if fmt in ("aif", "aiff"):
-        return "aiff"
-    return "wav"
+    fmt = (fmt or "aiff").strip().lower().lstrip(".")
+    if fmt == "wav":
+        return "wav"
+    return "aiff"
 
 
 # ------------------------------------------------------------
@@ -740,8 +811,9 @@ def _pcm_le_to_be(pcm, depth):
         return pcm
     out = bytearray(len(pcm))
     aligned = (len(pcm) // width) * width
-    for i in range(0, aligned, width):
-        out[i : i + width] = pcm[i : i + width][::-1]
+    # Strided slice copy per byte lane: exact swap, no per-sample Python loop (GIL).
+    for lane in range(width):
+        out[lane:aligned:width] = pcm[width - 1 - lane:aligned:width]
     if aligned < len(pcm):
         out[aligned:] = pcm[aligned:]
     return bytes(out)
@@ -890,7 +962,7 @@ def _stop_capture_process_only():
     _flush_monitor_queues()
 
 
-def start_recording(filename, file_format="wav"):
+def start_recording(filename, file_format="aiff"):
     """Start PCM file recording from shared arecord (WAV or AIFF)."""
     global wav_recorder, samplerate, channels, is_recording, bitdepth
     global record_write_queue, record_writer_thread, record_writer_stop
@@ -1107,7 +1179,22 @@ def set_card():
 
 
 def init_continuous_audio_engine(_samplerate=48000, _bitdepth=16):
-    """Start arecord for live stream (shared source for monitor + recorder)."""
+    """Start arecord for live stream (shared source for monitor + recorder).
+
+    While a file is being recorded the running capture is never restarted or
+    reconfigured, whoever asks (monitor, warmup, sink, input change).
+    """
+    with engine_lock:
+        if is_recording and wav_recorder is not None:
+            if arecord_process and arecord_process.poll() is None:
+                return
+            # Capture died mid-recording: restart with the recording's own format.
+            _samplerate = samplerate or _samplerate
+            _bitdepth = bitdepth or _bitdepth
+        _init_engine_unlocked(_samplerate, _bitdepth)
+
+
+def _init_engine_unlocked(_samplerate=48000, _bitdepth=16):
     global arecord_process, card, device, samplerate, bitdepth, channels, hwcaps
     global audio_router_thread, audio_reader_thread, arecord_stderr_thread
 
@@ -1251,7 +1338,7 @@ def init_card():
 def index():
     return render_template(
         "index.html",
-        cards=cards,
+        cards=list_capture_cards(),
         selected_card=card,
         selected_device=device,
         selected_name=name,
@@ -1397,16 +1484,34 @@ def _aac_stream_generator(bitrate_k, req_rate=None, req_depth=None):
         feeder.join(timeout=2)
 
 
-def _wav_stream_generator(req_rate=None, req_depth=None):
-    """Live PCM WAV monitor — same capture bytes as recording (bit-perfect)."""
+def _truncate_pcm_to_16(chunk, depth):
+    """Keep the top 16 bits of each little-endian sample (byte slicing, no per-sample loop)."""
+    if depth == 16:
+        return chunk
+    width = depth // 8
+    if depth == 8:
+        return chunk
+    out = bytearray(len(chunk) // width * 2)
+    out[0::2] = chunk[width - 2::width]
+    out[1::2] = chunk[width - 1::width]
+    return bytes(out)
+
+
+def _wav_stream_generator(req_rate=None, req_depth=None, out_16bit=False):
+    """Live PCM WAV monitor — same capture bytes as recording (bit-perfect).
+
+    out_16bit sends the top 16 bits instead (~1.5 Mbps stereo @48k): no codec
+    latency like AAC, but light enough for Wi-Fi/mobile.
+    """
     if RECORD_ONLY_MODE and _recording_active():
         return
     _ensure_monitor_engine(req_rate, req_depth)
     depth = bitdepth or 16
     rate = samplerate or 48000
     ch = _active_channel_count()
+    convert = out_16bit and depth in (24, 32)
     bucket = _register_monitor_listener()
-    yield _wav_header(rate, ch, depth, data_bytes=0x7FFFF000)
+    yield _wav_header(rate, ch, 16 if convert else depth, data_bytes=0x7FFFF000)
     idle = 0
     try:
         while True:
@@ -1418,7 +1523,7 @@ def _wav_stream_generator(req_rate=None, req_depth=None):
                     chunk = None
             if chunk:
                 idle = 0
-                yield chunk
+                yield _truncate_pcm_to_16(chunk, depth) if convert else chunk
             else:
                 idle += 1
                 # Keep live WAV open through brief Wi‑Fi / scheduler gaps.
@@ -1438,6 +1543,23 @@ def stream_audio_wav():
     req_depth = request.args.get("bitdepth", type=int)
     return Response(
         _wav_stream_generator(req_rate, req_depth),
+        mimetype="audio/wav",
+        headers={
+            "Cache-Control": "no-cache, no-store",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.route("/stream16.wav")
+def stream_audio_wav16():
+    """Low-bandwidth monitor — 16-bit PCM WAV (no codec latency)."""
+    if RECORD_ONLY_MODE and _recording_active():
+        return jsonify({"error": "Monitors disabled while recording (RECORD_ONLY_MODE)"}), 503
+    req_rate = request.args.get("samplerate", type=int)
+    req_depth = request.args.get("bitdepth", type=int)
+    return Response(
+        _wav_stream_generator(req_rate, req_depth, out_16bit=True),
         mimetype="audio/wav",
         headers={
             "Cache-Control": "no-cache, no-store",
@@ -1477,6 +1599,11 @@ def api_logs():
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
+    with engine_lock:
+        return _api_start()
+
+
+def _api_start():
     global card, device, name, samplerate, bitdepth, channels
 
     if _recording_active():
@@ -1487,26 +1614,20 @@ def api_start():
     if card is None:
         return jsonify({"error": "No capture card found"}), 400
 
-    file_format = _normalize_file_format(payload.get("format", "wav"))
-    ext = "aiff" if file_format == "aiff" else "wav"
+    file_format = _normalize_file_format(payload.get("format", "aiff"))
 
-    filename = str(payload.get("filename", "")).strip()
-    if filename == "":
-        filename = generate_filename(ext)
-    else:
-        lower = filename.lower()
-        if lower.endswith(".aif"):
-            filename = filename[:-4] + ".aiff"
-            file_format = "aiff"
-            ext = "aiff"
-        elif lower.endswith(".aiff"):
-            file_format = "aiff"
-            ext = "aiff"
-        elif lower.endswith(".wav"):
-            file_format = "wav"
-            ext = "wav"
-        else:
-            filename = f"{filename}.{ext}"
+    requested_filename = payload.get("filename", "")
+    if requested_filename is None:
+        requested_filename = ""
+    if not isinstance(requested_filename, str):
+        return jsonify({"error": "Filename must be a string"}), 400
+    try:
+        filename, file_format = clean_recording_filename(
+            requested_filename, file_format
+        )
+        filename = resolve_recording_path(filename)
+    except (ValueError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
 
     requested_samplerate = int(payload.get("samplerate", samplerate or 48000))
     requested_bitdepth = int(payload.get("bitdepth", bitdepth or 16))
@@ -1703,6 +1824,9 @@ def api_cards():
 @app.route("/api/select_card", methods=["POST"])
 def api_select_card():
     global selected_card, selected_device, selected_name
+
+    if _recording_active() or wav_recorder is not None:
+        return jsonify({"error": "stop recording before changing the capture card"}), 409
 
     payload = request.get_json(silent=True) or {}
     if selected_card != payload.get("card"):

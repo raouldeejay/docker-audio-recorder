@@ -1,23 +1,32 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Docker Audio Recorder</title>
 
     <style>
+        *, *::before, *::after { box-sizing: border-box; }
+
         body {
             font-family: Arial, sans-serif;
             background: #f4f4f4;
             margin: 0;
-            padding: 0;
+            padding: 16px;
+            padding-left: max(16px, env(safe-area-inset-left));
+            padding-right: max(16px, env(safe-area-inset-right));
+            padding-bottom: max(16px, env(safe-area-inset-bottom));
         }
 
         .container {
             max-width: 700px;
-            margin: 40px auto;
+            width: 100%;
+            margin: 24px auto;
             background: #fff;
             padding: 25px 35px;
             border-radius: 10px;
             box-shadow: 0 0 12px rgba(0,0,0,0.15);
+            overflow-x: hidden;
         }
 
         h1, h2 {
@@ -78,11 +87,12 @@
 
         select, input[type="text"] {
             padding: 8px;
-            font-size: 15px;
+            font-size: 16px; /* avoids iOS zoom-on-focus */
             border-radius: 6px;
             border: 1px solid #ccc;
             margin-right: 10px;
             margin-top: 5px;
+            max-width: 100%;
         }
 
         .info-box {
@@ -113,6 +123,8 @@
             border-radius: 8px;
             padding: 20px;
             margin-top: 20px;
+            overflow: visible;
+            min-width: 0;
         }
 
         .stream-controls {
@@ -120,6 +132,11 @@
             gap: 10px;
             flex-wrap: wrap;
             margin-bottom: 15px;
+        }
+
+        .stream-controls button {
+            flex: 1 1 auto;
+            min-width: 9rem;
         }
 
         .stream-status {
@@ -147,9 +164,148 @@
             50% { opacity: 0.7; }
         }
 
-        #audioPlayer {
+        .audio-wrap {
             width: 100%;
+            max-width: 100%;
+            min-width: 0;
             margin-top: 15px;
+            overflow: visible;
+        }
+
+        #audioPlayer {
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            min-height: 52px;
+            height: 54px;
+            margin: 0;
+        }
+
+        #flashMsg {
+            min-height: 1.2em;
+            margin: 0.5rem 0 0;
+            font-size: 0.95rem;
+            color: #555;
+        }
+        #flashMsg.error { color: #b33; }
+        #flashMsg.ok { color: #2a6; }
+
+        .vu-section {
+            margin-top: 1.25rem;
+        }
+        .vu-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 6px 0;
+        }
+        .vu-label {
+            width: 1.2rem;
+            font-weight: bold;
+            color: #444;
+        }
+        .vu-track {
+            position: relative;
+            flex: 1;
+            height: 18px;
+            background: #1a1a1a;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        /* Fixed level zones (digital peak style): green < -18, yellow -18..-6, red > -6 dBFS
+           on a -60..0 display scale → 70% / 90% / 100%. */
+        .vu-colors {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(
+                90deg,
+                #1b8a2f 0%,
+                #1b8a2f 70%,
+                #d4a017 70%,
+                #d4a017 90%,
+                #d62828 90%,
+                #d62828 100%
+            );
+        }
+        /* Dark mask covers the unlit portion; colors stay fixed in place. */
+        .vu-mask {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            background: #1a1a1a;
+            transition: width 40ms linear;
+            pointer-events: none;
+        }
+        .vu-hold {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #f5f5f5;
+            opacity: 0.95;
+            left: 0%;
+            transition: left 40ms linear;
+            z-index: 2;
+            pointer-events: none;
+        }
+        .vu-track.clip {
+            box-shadow: inset 0 0 0 2px #ff2a2a;
+        }
+        .vu-db {
+            width: 4.5rem;
+            flex-shrink: 0;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            font-size: 13px;
+            color: #555;
+        }
+
+        .hostname {
+            word-break: break-word;
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 12px;
+                padding-left: max(12px, env(safe-area-inset-left));
+                padding-right: max(12px, env(safe-area-inset-right));
+                padding-bottom: max(12px, env(safe-area-inset-bottom));
+            }
+
+            .container {
+                margin: 0 auto;
+                padding: 16px;
+                border-radius: 8px;
+            }
+
+            h1 { font-size: 1.45rem; }
+            h2 { font-size: 1.15rem; }
+
+            .stream-section {
+                padding: 14px;
+            }
+
+            .stream-controls button {
+                min-width: calc(50% - 6px);
+                margin-right: 0;
+            }
+
+            select, input[type="text"] {
+                width: 100%;
+                margin-right: 0;
+            }
+
+            #audioPlayer {
+                min-height: 56px;
+                height: 56px;
+            }
+
+            .vu-db {
+                width: 3.6rem;
+                font-size: 12px;
+            }
         }
     </style>
 </head>
@@ -164,6 +320,26 @@
     <div class="section">
         <h2>Status</h2>
         <p>Recording: <span id="recordingStatus" class="status">Idle</span></p>
+        <div class="vu-section">
+            <div class="vu-row">
+                <span class="vu-label">L</span>
+                <div class="vu-track" id="vuTrackL">
+                    <div class="vu-colors"></div>
+                    <div class="vu-mask" id="vuMaskL"></div>
+                    <div class="vu-hold" id="vuHoldL"></div>
+                </div>
+                <span class="vu-db" id="vuDbL">−∞</span>
+            </div>
+            <div class="vu-row">
+                <span class="vu-label">R</span>
+                <div class="vu-track" id="vuTrackR">
+                    <div class="vu-colors"></div>
+                    <div class="vu-mask" id="vuMaskR"></div>
+                    <div class="vu-hold" id="vuHoldR"></div>
+                </div>
+                <span class="vu-db" id="vuDbR">−∞</span>
+            </div>
+        </div>
     </div>
 
     <!-- CARD LIST -->
@@ -206,8 +382,8 @@
             </p>
 
             <select id="inputSource">
-                <option value="Line">Line (Analog)</option>
-                <option value="IEC958 In">SPDIF (IEC958)</option>
+                <option value="Line" {% if input_source == "Line" %}selected{% endif %}>Line (Analog)</option>
+                <option value="IEC958 In" {% if input_source == "IEC958 In" %}selected{% endif %}>SPDIF (IEC958)</option>
             </select>
 
             <button onclick="setInputSource()">Apply</button>
@@ -238,6 +414,14 @@
             <option value="16">16-bit</option>
             <option value="24">24-bit</option>
         </select>
+
+        <br><br>
+
+        <label>File format:</label><br>
+        <select id="fileFormat">
+            <option value="wav" selected>WAV (PCM)</option>
+            <option value="aiff">AIFF (PCM, metadata-ready)</option>
+        </select>
     </div>
 
     <!-- RECORDING CONTROLS -->
@@ -246,6 +430,7 @@
 
         <button id="startBtn" onclick="startRecording()">▶ Start Recording</button>
         <button id="stopBtn" onclick="stopRecording()" disabled>⏹ Stop Recording</button>
+        <p id="flashMsg"></p>
 
     </div>
     
@@ -257,21 +442,30 @@
 
         <div class="stream-controls">
             <button id="qualityHighBtn" class="active" onclick="switchQuality('high')">
-                📡 Studio Quality (LAN)
+                Studio (WAV PCM)
             </button>
             <button id="qualityLowBtn" onclick="switchQuality('low')">
-                📶 Low Bandwidth (WiFi)
+                Low bandwidth (256 kbps AAC)
             </button>
             <button id="stopStreamBtn" onclick="stopStream()">
-                ⏸ Stop Stream
+                Stop Stream
             </button>
         </div>
 
-        <audio id="audioPlayer" controls playsinline></audio>
+        <div class="audio-wrap">
+            <audio id="audioPlayer" controls playsinline webkit-playsinline preload="none"></audio>
+        </div>
 
         <div class="stream-status">
             <span class="stream-indicator" id="streamIndicator"></span>
             <span id="streamStatusText">Stream: Idle</span>
+        </div>
+
+        <div class="stream-controls" style="margin-top: 1rem;">
+            <button id="sinkMonitorBtn" onclick="toggleSinkMonitor()">
+                PipeWire sink: Off
+            </button>
+            <span id="sinkMonitorStatus" class="stream-status">Local low-latency monitor (source resolution)</span>
         </div>
     </div>
     
@@ -283,13 +477,256 @@ let previousSamplerate = null;
 let currentQuality = 'high';
 let currentStreamUrl = null;
 let streamAbortController = null;
+let sinkMonitorOn = false;
+let pcmPlayer = null; // Web Audio lossless PCM (Safari/iOS cannot play live WAV)
+
+function flash(msg, kind) {
+    const el = document.getElementById("flashMsg");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.remove("ok", "error");
+    if (kind) el.classList.add(kind);
+}
+
+/** Live progressive WAV is broken on iOS/Safari — use Web Audio + raw PCM instead. */
+function needsWebAudioPcm() {
+    const ua = navigator.userAgent || "";
+    const iOS = /iPad|iPhone|iPod/.test(ua)
+        || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const safari = /^((?!chrome|android).)*safari/i.test(ua);
+    return iOS || safari;
+}
+
+function stopPcmPlayer() {
+    if (!pcmPlayer) return;
+    pcmPlayer.stopped = true;
+    try { if (pcmPlayer.abort) pcmPlayer.abort.abort(); } catch (e) {}
+    try {
+        if (pcmPlayer.sources) {
+            pcmPlayer.sources.forEach(s => { try { s.stop(); } catch (e) {} });
+        }
+    } catch (e) {}
+    try { if (pcmPlayer.ctx) pcmPlayer.ctx.close(); } catch (e) {}
+    pcmPlayer = null;
+}
+
+function parseWavHeader(u8) {
+    if (u8.length < 44) return null;
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    if (dv.getUint32(0, false) !== 0x52494646 || dv.getUint32(8, false) !== 0x57415645) {
+        return null; // RIFF / WAVE
+    }
+    let off = 12;
+    let fmt = null;
+    let dataOffset = null;
+    while (off + 8 <= u8.length) {
+        const id = String.fromCharCode(u8[off], u8[off + 1], u8[off + 2], u8[off + 3]);
+        const size = dv.getUint32(off + 4, true);
+        const body = off + 8;
+        if (id === "fmt " && size >= 16) {
+            fmt = {
+                audioFormat: dv.getUint16(body, true),
+                channels: dv.getUint16(body + 2, true),
+                sampleRate: dv.getUint32(body + 4, true),
+                bitDepth: dv.getUint16(body + 14, true),
+            };
+        } else if (id === "data") {
+            dataOffset = body;
+            break;
+        }
+        off = body + size + (size % 2);
+    }
+    if (!fmt || dataOffset == null) return null;
+    return { ...fmt, dataOffset };
+}
+
+function pcmChunkToAudioBuffer(ctx, bytes, channels, bitDepth, sampleRate) {
+    const width = bitDepth >> 3;
+    const frame = width * channels;
+    const n = Math.floor(bytes.length / frame);
+    if (n < 1) return null;
+    const full = 1 << (bitDepth - 1);
+    let outBuf;
+    try {
+        outBuf = ctx.createBuffer(channels, n, sampleRate);
+    } catch (e) {
+        // Older Safari: buffer rate must match the context (may resample).
+        outBuf = ctx.createBuffer(channels, n, ctx.sampleRate);
+    }
+    for (let c = 0; c < channels; c++) {
+        const chData = outBuf.getChannelData(c);
+        let o = c * width;
+        for (let i = 0; i < n; i++) {
+            let v;
+            if (bitDepth === 16) {
+                v = bytes[o] | (bytes[o + 1] << 8);
+                if (v & 0x8000) v -= 0x10000;
+            } else if (bitDepth === 24) {
+                v = bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16);
+                if (v & 0x800000) v -= 0x1000000;
+            } else {
+                v = bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16) | (bytes[o + 3] << 24);
+            }
+            chData[i] = v / full;
+            o += frame;
+        }
+    }
+    return outBuf;
+}
+
+async function startPcmPlayer(url) {
+    stopPcmPlayer();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) throw new Error("Web Audio not available");
+
+    const abort = new AbortController();
+    const ctx = new AC();
+    await ctx.resume();
+
+    pcmPlayer = {
+        ctx,
+        abort,
+        stopped: false,
+        sources: [],
+        nextTime: 0,
+        sampleRate: 48000,
+        channels: 2,
+        bitDepth: 24,
+        leftover: new Uint8Array(0),
+        headerDone: false,
+        started: false,
+        pending: [], // AudioBuffers waiting for preroll
+        pendingSecs: 0,
+    };
+
+    const PREROLL_S = 0.35;   // buffer before audible start — avoids early underruns
+    const BLOCK_S = 0.1;      // schedule in ~100ms chunks
+    const MIN_AHEAD_S = 0.15; // keep this much queued ahead of the playhead
+
+    const scheduleBuf = (audioBuf) => {
+        if (!pcmPlayer || pcmPlayer.stopped || !audioBuf) return;
+        const src = ctx.createBufferSource();
+        src.buffer = audioBuf;
+        src.connect(ctx.destination);
+        const now = ctx.currentTime;
+        // If we fell behind, resume immediately without inserting a long silence gap.
+        if (pcmPlayer.nextTime < now + 0.02) {
+            pcmPlayer.nextTime = now + 0.02;
+        }
+        src.start(pcmPlayer.nextTime);
+        pcmPlayer.nextTime += audioBuf.duration;
+        pcmPlayer.sources.push(src);
+        if (pcmPlayer.sources.length > 48) {
+            pcmPlayer.sources.splice(0, 16);
+        }
+    };
+
+    const flushPending = (force) => {
+        if (!pcmPlayer.started) {
+            if (!force && pcmPlayer.pendingSecs < PREROLL_S) return;
+            pcmPlayer.started = true;
+            pcmPlayer.nextTime = ctx.currentTime + 0.05;
+        }
+        while (pcmPlayer.pending.length) {
+            const ahead = pcmPlayer.nextTime - ctx.currentTime;
+            if (!force && ahead > MIN_AHEAD_S + BLOCK_S) break;
+            scheduleBuf(pcmPlayer.pending.shift());
+        }
+        // Recompute pendingSecs roughly
+        pcmPlayer.pendingSecs = pcmPlayer.pending.reduce((s, b) => s + b.duration, 0);
+    };
+
+    const res = await fetch(url, { signal: abort.signal, cache: "no-store" });
+    if (!res.ok || !res.body) throw new Error("PCM stream HTTP " + res.status);
+    const reader = res.body.getReader();
+
+    const pump = async () => {
+        while (pcmPlayer && !pcmPlayer.stopped) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value || !value.length) continue;
+
+            let chunk = value;
+            if (pcmPlayer.leftover.length) {
+                const merged = new Uint8Array(pcmPlayer.leftover.length + chunk.length);
+                merged.set(pcmPlayer.leftover);
+                merged.set(chunk, pcmPlayer.leftover.length);
+                chunk = merged;
+                pcmPlayer.leftover = new Uint8Array(0);
+            }
+
+            if (!pcmPlayer.headerDone) {
+                const hdr = parseWavHeader(chunk);
+                if (!hdr) {
+                    if (chunk.length < 128) {
+                        pcmPlayer.leftover = chunk;
+                        continue;
+                    }
+                    throw new Error("Invalid WAV header");
+                }
+                pcmPlayer.sampleRate = hdr.sampleRate;
+                pcmPlayer.channels = hdr.channels;
+                pcmPlayer.bitDepth = hdr.bitDepth;
+                pcmPlayer.headerDone = true;
+                chunk = chunk.subarray(hdr.dataOffset);
+            }
+
+            const width = pcmPlayer.bitDepth >> 3;
+            const frame = width * pcmPlayer.channels;
+            const usable = Math.floor(chunk.length / frame) * frame;
+            if (usable < frame) {
+                pcmPlayer.leftover = chunk;
+                continue;
+            }
+            if (usable < chunk.length) {
+                pcmPlayer.leftover = chunk.subarray(usable);
+            }
+            const pcm = chunk.subarray(0, usable);
+            const blockBytes = frame * Math.max(256, Math.floor(pcmPlayer.sampleRate * BLOCK_S));
+            for (let off = 0; off + frame <= pcm.length; ) {
+                const take = Math.min(blockBytes, pcm.length - off);
+                const aligned = Math.floor(take / frame) * frame;
+                if (aligned < frame) break;
+                const slice = pcm.subarray(off, off + aligned);
+                off += aligned;
+                const audioBuf = pcmChunkToAudioBuffer(
+                    ctx, slice, pcmPlayer.channels, pcmPlayer.bitDepth, pcmPlayer.sampleRate
+                );
+                if (!audioBuf) continue;
+                pcmPlayer.pending.push(audioBuf);
+                pcmPlayer.pendingSecs += audioBuf.duration;
+                // Cap pending queue (~1s) so a long Wi‑Fi pause doesn't build huge latency.
+                while (pcmPlayer.pendingSecs > 1.0 && pcmPlayer.pending.length > 1) {
+                    const dropped = pcmPlayer.pending.shift();
+                    pcmPlayer.pendingSecs -= dropped.duration;
+                }
+            }
+            flushPending(false);
+        }
+        flushPending(true);
+    };
+
+    pump().catch(e => {
+        if (!pcmPlayer || pcmPlayer.stopped) return;
+        if (e.name === "AbortError") return;
+        console.error("PCM Web Audio error:", e);
+        flash("PCM monitor error: " + (e.message || e), "error");
+        updateStreamStatus(false, null);
+    });
+}
 
 document.getElementById("bitdepth").addEventListener("change", e => {
     previousBitdepth = parseInt(e.target.value);
+    if (currentStreamUrl) {
+        switchQuality(currentQuality);
+    }
 });
 
 document.getElementById("samplerate").addEventListener("change", e => {
     previousSamplerate = parseInt(e.target.value);
+    if (currentStreamUrl) {
+        switchQuality(currentQuality);
+    }
 });
 
 function pollStatus() {
@@ -306,6 +743,10 @@ function pollStatus() {
                 el.innerText = "Idle";
                 el.classList.remove("recording");
             }
+            if (typeof data.sink_monitor === "boolean") {
+                sinkMonitorOn = data.sink_monitor;
+                updateSinkMonitorUi();
+            }
         })
         .catch(e => console.error("Status poll error:", e));
 }
@@ -316,6 +757,10 @@ function refreshInputSource() {
         .then(data => {
             if (data.supported) {
                 document.getElementById("currentSource").innerText = data.source;
+                const sel = document.getElementById("inputSource");
+                if (sel && data.source) {
+                    sel.value = data.source;
+                }
             }
         });
 }
@@ -332,11 +777,12 @@ function setInputSource() {
     .then(data => {
         if (data.status === "ok") {
             refreshInputSource();
-            alert("Input set to: " + data.source);
+            flash("Input set to " + data.source, "ok");
         } else {
-            alert("Error: " + (data.error || "unknown"));
+            flash(data.error || "Failed to set input", "error");
         }
-    });
+    })
+    .catch(() => flash("Failed to set input", "error"));
 }
 
 function setCard() {
@@ -354,6 +800,8 @@ function startRecording() {
     const filename = document.getElementById("filename").value.trim();
     const samplerate = document.getElementById("samplerate").value;
     const bitdepth = document.getElementById("bitdepth").value;
+    const format = document.getElementById("fileFormat").value;
+    const wasStreaming = !!currentStreamUrl;
 
     fetch("/api/start", {
         method: "POST",
@@ -361,19 +809,32 @@ function startRecording() {
         body: JSON.stringify({
             filename,
             samplerate,
-            bitdepth
+            bitdepth,
+            format
         })
     })
     .then(r => r.json())
     .then(data => {
-        if (data.error) {
-            alert("Error: " + data.error);
-        } else {    
+        if (data.error || data.status === "error") {
+            flash(data.error || data.message || "Recording failed", "error");
+        } else {
             document.getElementById("startBtn").disabled = true;
             document.getElementById("stopBtn").disabled = false;
-            alert("Recording started\nFilename: " + data.filename);
+            if (data.record_only) {
+                stopStream();
+            } else if (wasStreaming) {
+                switchQuality(currentQuality);
+            }
+            flash("Recording " + data.filename, "ok");
         }
-    });
+    })
+    .catch(() => flash("Recording failed", "error"));
+}
+
+function warmupEngine() {
+    const samplerate = document.getElementById("samplerate").value || 48000;
+    const bitdepth = document.getElementById("bitdepth").value || 24;
+    return fetch(`/api/warmup?samplerate=${samplerate}&bitdepth=${bitdepth}`).catch(() => {});
 }
 
 function stopRecording() {
@@ -382,8 +843,58 @@ function stopRecording() {
         .then(data => {
             document.getElementById("startBtn").disabled = false;
             document.getElementById("stopBtn").disabled = true;
-            alert("Recording stopped");
-        });
+            if (data.status === "error") {
+                flash(data.message || "Stop failed", "error");
+            } else {
+                flash("Recording saved", "ok");
+            }
+        })
+        .catch(() => flash("Stop failed", "error"));
+}
+
+function updateSinkMonitorUi() {
+    const btn = document.getElementById("sinkMonitorBtn");
+    const st = document.getElementById("sinkMonitorStatus");
+    if (!btn) return;
+    btn.textContent = sinkMonitorOn ? "PipeWire sink: On" : "PipeWire sink: Off";
+    btn.classList.toggle("active", sinkMonitorOn);
+    if (st) {
+        st.textContent = sinkMonitorOn
+            ? "Feeding source-resolution PCM to PipeWire (low latency)"
+            : "Local low-latency monitor (source resolution)";
+    }
+}
+
+function toggleSinkMonitor() {
+    const samplerate = document.getElementById("samplerate").value;
+    const bitdepth = document.getElementById("bitdepth").value;
+    const enable = !sinkMonitorOn;
+    fetch("/api/sink_monitor", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({enabled: enable, samplerate, bitdepth})
+    })
+    .then(r => r.json().then(data => ({ok: r.ok, data})))
+    .then(({ok, data}) => {
+        if (!ok || data.status === "error") {
+            sinkMonitorOn = false;
+            flash(data.message || data.error || "PipeWire sink failed", "error");
+        } else {
+            sinkMonitorOn = !!data.enabled;
+            flash(
+                sinkMonitorOn
+                    ? "PipeWire sink on → " + (data.sink || "default")
+                    : "PipeWire sink off",
+                "ok"
+            );
+        }
+        updateSinkMonitorUi();
+    })
+    .catch(() => {
+        sinkMonitorOn = false;
+        updateSinkMonitorUi();
+        flash("PipeWire sink failed", "error");
+    });
 }
 
 function loadCaps() {
@@ -423,6 +934,7 @@ function loadCaps() {
 
             bd.value = _bd;
             sr.value = _sr;
+            warmupEngine();
         });
 }
 
@@ -446,31 +958,68 @@ function switchQuality(quality) {
     document.getElementById("qualityHighBtn").classList.toggle("active", quality === "high");
     document.getElementById("qualityLowBtn").classList.toggle("active", quality === "low");
 
-    const endpoint = quality === "high" ? "/stream.aac" : "/low_stream.aac";
+    const samplerate = document.getElementById("samplerate").value;
+    const bitdepth = document.getElementById("bitdepth").value;
+    const qs = `samplerate=${samplerate}&bitdepth=${bitdepth}&t=${Date.now()}`;
+    const endpoint = quality === "high" ? `/stream.wav?${qs}` : `/low_stream.aac?${qs}`;
     const player = document.getElementById("audioPlayer");
-    
+    const statusText = document.getElementById("streamStatusText");
+    const useWebAudio = quality === "high" && needsWebAudioPcm();
+
     // Stop current stream if any
     stopStream();
+    statusText.textContent = "Stream: Connecting…";
 
-    // Set stream source with cache buster
-    currentStreamUrl = `${endpoint}?t=${new Date().getTime()}`;
-    player.src = currentStreamUrl;
-
-    // Attempt to play
-    player.play()
-        .then(() => {
-            updateStreamStatus(true, quality);
-        })
-        .catch(e => {
-            console.error("Stream play error:", e);
-            updateStreamStatus(false, quality);
-        });
+    // Warm capture first so we do not pay an arecord restart on the stream request.
+    warmupEngine().finally(() => {
+        currentStreamUrl = endpoint;
+        if (useWebAudio) {
+            // iOS/Safari: lossless PCM via Web Audio (native <audio> rejects live WAV).
+            startPcmPlayer(endpoint)
+                .then(() => {
+                    updateStreamStatus(true, quality);
+                    flash("Studio PCM via Web Audio (lossless)", "ok");
+                })
+                .catch(e => {
+                    console.error("PCM Web Audio play error:", e);
+                    flash(e.message || "PCM monitor failed", "error");
+                    updateStreamStatus(false, quality);
+                });
+            return;
+        }
+        player.src = currentStreamUrl;
+        player.play()
+            .then(() => {
+                updateStreamStatus(true, quality);
+            })
+            .catch(e => {
+                console.error("Stream play error:", e);
+                // Fallback: if WAV fails in <audio>, try Web Audio PCM path.
+                if (quality === "high") {
+                    startPcmPlayer(endpoint)
+                        .then(() => {
+                            updateStreamStatus(true, quality);
+                            flash("Studio PCM via Web Audio (lossless)", "ok");
+                        })
+                        .catch(err => {
+                            flash(err.message || "Stream failed", "error");
+                            updateStreamStatus(false, quality);
+                        });
+                } else {
+                    updateStreamStatus(false, quality);
+                }
+            });
+    });
 }
 
 function stopStream() {
+    stopPcmPlayer();
     const player = document.getElementById("audioPlayer");
     player.pause();
+    player.removeAttribute("src");
     player.src = "";
+    player.load(); // drop the HTTP connection to the stream
+    currentStreamUrl = null;
     updateStreamStatus(false, null);
 }
 
@@ -480,12 +1029,58 @@ function updateStreamStatus(isActive, quality) {
 
     if (isActive) {
         indicator.classList.add("active");
-        const qualityLabel = quality === "high" ? "Studio Quality" : "Low Bandwidth";
+        let qualityLabel = quality === "high" ? "WAV PCM" : "256 kbps AAC";
+        if (quality === "high" && pcmPlayer) {
+            qualityLabel = "PCM lossless (Web Audio)";
+        }
         statusText.textContent = `Stream: LIVE (${qualityLabel})`;
     } else {
         indicator.classList.remove("active");
         statusText.textContent = "Stream: Idle";
     }
+}
+
+function dbToPct(db) {
+    // Map -60..0 dBFS to 0..100%
+    if (db <= -60) return 0;
+    if (db >= 0) return 100;
+    return ((db + 60) / 60) * 100;
+}
+
+function formatDb(db) {
+    if (db <= -120) return "−∞";
+    return (db > -0.05 ? "0.0" : db.toFixed(1)) + " dB";
+}
+
+function applyVu(side, peak, hold, peakDb, holdDb, clip) {
+    const mask = document.getElementById("vuMask" + side);
+    const holdEl = document.getElementById("vuHold" + side);
+    const track = document.getElementById("vuTrack" + side);
+    const dbEl = document.getElementById("vuDb" + side);
+    if (!mask) return;
+    const lit = dbToPct(peakDb);
+    mask.style.width = (100 - lit) + "%";
+    holdEl.style.left = Math.min(99.5, dbToPct(holdDb)) + "%";
+    track.classList.toggle("clip", !!clip);
+    dbEl.textContent = formatDb(holdDb);
+}
+
+function startLevelsMeter() {
+    if (window._levelsES) {
+        try { window._levelsES.close(); } catch (e) {}
+    }
+    const es = new EventSource("/api/levels");
+    window._levelsES = es;
+    es.onmessage = (ev) => {
+        try {
+            const d = JSON.parse(ev.data);
+            applyVu("L", d.peak_l, d.hold_l, d.peak_db_l, d.hold_db_l, d.clip_l);
+            applyVu("R", d.peak_r, d.hold_r, d.peak_db_r, d.hold_db_r, d.clip_r);
+        } catch (e) {}
+    };
+    es.onerror = () => {
+        // Browser will reconnect; keep last reading.
+    };
 }
 
 window.onload = function() {
@@ -502,6 +1097,7 @@ window.onload = function() {
     refreshInputSource();
     pollStatus();
     setInterval(pollStatus, 1000);
+    startLevelsMeter();
 
     // Audio player event listeners for stream status
     const player = document.getElementById("audioPlayer");

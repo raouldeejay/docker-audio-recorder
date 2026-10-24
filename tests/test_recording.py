@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,6 +36,23 @@ class RecordingFilenameTests(unittest.TestCase):
             filename = resolve_recording_path("album/track.wav", root)
 
             self.assertEqual(filename, "album/track_1.wav")
+
+
+class HostMachineNameTests(unittest.TestCase):
+    def test_uses_configured_name_before_host_name_mount(self):
+        with tempfile.TemporaryDirectory() as root:
+            hostname_file = Path(root, "hostname")
+            hostname_file.write_text("rpi5\n")
+            with patch.object(recorder_app, "HOST_MACHINE_NAME_PATH", hostname_file):
+                with patch.dict("os.environ", {"HOST_MACHINE_NAME": "rpi4"}, clear=False):
+                    self.assertEqual(recorder_app.get_host_machine_name(), "rpi4")
+                with patch.dict("os.environ", {"HOST_MACHINE_NAME": ""}, clear=False):
+                    self.assertEqual(recorder_app.get_host_machine_name(), "rpi5")
+
+    def test_omits_machine_name_when_host_name_is_unavailable(self):
+        with patch.object(recorder_app, "HOST_MACHINE_NAME_PATH", Path("/not/a/hostname")):
+            with patch.dict("os.environ", {"HOST_MACHINE_NAME": ""}, clear=False):
+                self.assertIsNone(recorder_app.get_host_machine_name())
 
 
 class PcmRecorderTests(unittest.TestCase):

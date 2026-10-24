@@ -10,10 +10,12 @@ services:
     volumes:
       - ${RECORDINGS_DIR:-./recordings}:/app/recordings
       - /proc/asound:/mnt/asound:ro
+      - /etc/hostname:/mnt/host_hostname:ro
     group_add:
       - audio
     devices:
       - /dev/snd:/dev/snd  # Grant access to audio
     environment:
       - FLASK_ENV=production
+      - HOST_MACHINE_NAME=${HOST_MACHINE_NAME:-}
     privileged: false

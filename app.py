@@ -7,7 +7,6 @@ import threading
 import time
 import math
 import json
-import socket
 import fcntl
 import queue as queue_module
 from collections import deque
@@ -75,7 +74,19 @@ hwcaps = {
     "channels": None,
 }
 
-HOSTNAME = socket.gethostname()
+HOST_MACHINE_NAME_PATH = Path("/mnt/host_hostname")
+
+
+def get_host_machine_name():
+    """Return the Docker host name, never the container's generated host name."""
+    configured_name = os.environ.get("HOST_MACHINE_NAME", "").strip()
+    if configured_name:
+        return configured_name
+    try:
+        host_name = HOST_MACHINE_NAME_PATH.read_text().strip()
+    except OSError:
+        return None
+    return host_name or None
 
 # Per-client monitor queues. A shared queue made multi-device listening warble
 # (each consumer stole alternating PCM chunks).
@@ -1139,7 +1150,7 @@ def index():
         selected_name=name,
         input_source=input_source,
         selector_present=(selector_numid is not None),
-        hostname=HOSTNAME,
+        host_machine_name=get_host_machine_name(),
     )
 
 

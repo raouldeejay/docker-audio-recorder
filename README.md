@@ -51,6 +51,9 @@ meters), **Monitor** (quality selector and one play/stop control), **Library**
 (browse, play, download, and delete completed recordings), and **Settings**
 (device, input, and recording format settings). On mobile, these are available through a
 bottom navigation bar; desktop uses the same navigation above the content.
+The title shows the Docker host machine name (for example, `rpi4` or `rpi5`)
+from the read-only `/etc/hostname` mount. Set `HOST_MACHINE_NAME` to override
+it when that mount is unavailable.
 
 ### Playback policy
 

@@ -80,6 +80,17 @@
             margin: 0;
         }
 
+        .machine-name {
+            color: var(--sl-color-neutral-600);
+            font-size: 0.65em;
+            font-weight: 400;
+            white-space: nowrap;
+        }
+
+        #flashMsg:empty {
+            display: none;
+        }
+
         button {
             background: var(--sl-color-primary-600);
             color: var(--sl-color-neutral-0);
@@ -443,9 +454,8 @@
 <div class="container">
 
     <header class="app-header">
-        <h1>Docker Audio Recorder</h1>
+        <h1>Docker Audio Recorder{% if host_machine_name %} <span class="machine-name">· {{ host_machine_name }}</span>{% endif %}</h1>
     </header>
-    <div class="hostname">Host: {{ hostname }}</div>
     <p id="flashMsg" role="status" aria-live="polite"></p>
 
     <nav class="app-nav app-nav--desktop" aria-label="Primary navigation">

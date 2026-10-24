@@ -38,6 +38,9 @@ The web interface will be available at `http://localhost:5000`
 The interface uses native browser controls styled with the open-source
 [Shoelace](https://shoelace.style/) 2.20.1 light/dark theme tokens, vendored
 in `static/vendor/shoelace`. The UI does not require browser internet access.
+This is an intentional styling-only choice: the app does not load Shoelace web
+components or a component runtime, and uses native controls plus accessible
+inline SVGs when an icon-only action is needed.
 The page follows the device light/dark preference by default; use the
 **Theme** control in the header to persist a System, Light, or Dark preference.
 

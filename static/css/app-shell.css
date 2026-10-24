@@ -111,11 +111,49 @@
 }
 
 .recording-actions {
+  display: grid;
+  grid-template-columns: 14rem repeat(2, 2.75rem);
   flex-shrink: 0;
+}
+
+.recording-actions audio {
+  width: 100%;
+  min-width: 0;
+}
+
+.recording-actions button,
+.library-download {
+  display: inline-grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin: 0;
+  padding: 0;
+  place-items: center;
+  border-radius: var(--sl-border-radius-medium);
 }
 
 .recording-actions button {
   margin: 0;
+}
+
+.library-download {
+  color: var(--sl-color-neutral-0);
+  background: var(--sl-color-primary-600);
+}
+
+.library-download:hover {
+  color: var(--sl-color-neutral-0);
+  background: var(--sl-color-primary-700);
+}
+
+.recording-actions svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .recording-actions .recording-delete {
@@ -124,7 +162,6 @@
 
 .recording-actions .recording-delete:hover:not(:disabled) {
   background: var(--sl-color-danger-700);
-}
 }
 
 .monitor-quality {
@@ -200,9 +237,10 @@
 
   .recording-actions {
     width: 100%;
+    grid-template-columns: minmax(0, 1fr) repeat(2, 2.75rem);
   }
 
-  .recording-actions button {
-    flex: 1;
+  .recording-actions audio {
+    min-width: 0;
   }
 }

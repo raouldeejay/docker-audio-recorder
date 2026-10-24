@@ -30,11 +30,25 @@ function setStatus(message, error = false) {
   status.classList.toggle("error", error);
 }
 
-function createAction(label, className, onClick) {
+function createIcon(paths) {
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  paths.forEach(d => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    icon.append(path);
+  });
+  return icon;
+}
+
+function createIconButton(label, className, paths, onClick) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = className;
-  button.textContent = label;
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.append(createIcon(paths));
   button.addEventListener("click", onClick);
   return button;
 }
@@ -87,9 +101,16 @@ function renderRecordings(recordings) {
     play.setAttribute("aria-label", `Play ${recording.path}`);
     const download = document.createElement("a");
     download.href = fileUrl(recording.path, true);
-    download.textContent = "Download";
     download.className = "library-download";
-    const remove = createAction("Delete", "recording-delete", async () => {
+    download.setAttribute("aria-label", `Download ${recording.path}`);
+    download.title = `Download ${recording.path}`;
+    download.append(createIcon([
+      "M12 3v12m0 0 4-4m-4 4-4-4",
+      "M4 17v3h16v-3",
+    ]));
+    const remove = createIconButton("Delete " + recording.path, "recording-delete", [
+      "M4 7h16M10 11v6m4-6v6M9 7l1-3h4l1 3M6 7l1 14h10l1-14",
+    ], async () => {
       remove.disabled = true;
       try {
         await deleteRecording(recording, entry);

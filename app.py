@@ -691,6 +691,31 @@ def _active_recording_path():
     return Path(path).resolve() if path else None
 
 
+def _renamed_recording_path(recording, filename):
+    """Build a safe same-directory target path while retaining the media type."""
+    if not isinstance(filename, str) or not filename.strip():
+        raise ValueError("Filename is required")
+    if "/" in filename or "\\" in filename:
+        raise ValueError("Filename must not contain a path")
+
+    requested = filename.strip()
+    requested_suffix = Path(requested).suffix.lower()
+    if requested_suffix and requested_suffix != recording.suffix.lower():
+        raise ValueError(f"Filename extension must remain {recording.suffix.lower()}")
+    if requested_suffix:
+        requested = Path(requested).stem
+
+    safe_filename, _ = clean_recording_filename(requested, "wav")
+    safe_stem = Path(safe_filename).stem
+    target_name = f"{safe_stem}{recording.suffix}"
+    if len(target_name) > 255:
+        raise ValueError("Filename is too long (maximum 255 characters)")
+    target = recording.with_name(target_name)
+    if target != recording and target.exists():
+        raise FileExistsError("A recording with that filename already exists")
+    return target
+
+
 def list_recordings():
     """List supported recordings below the configured recordings root."""
     root = _recordings_root_path()
@@ -1416,6 +1441,34 @@ def api_delete_recording():
 
     _log(f"Recording deleted → {recording}")
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/recordings", methods=["PATCH"])
+def api_rename_recording():
+    """Rename a completed recording without moving it outside its folder."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        recording = _recording_library_path(payload.get("path"))
+        target = _renamed_recording_path(recording, payload.get("filename"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+    except FileExistsError as e:
+        return jsonify({"error": str(e)}), 409
+
+    if recording == _active_recording_path():
+        return jsonify({"error": "Cannot rename the active recording"}), 409
+
+    try:
+        recording.rename(target)
+    except OSError as e:
+        _log(f"Failed to rename recording {recording}: {e}")
+        return jsonify({"error": "Failed to rename recording"}), 500
+
+    relative_path = target.relative_to(_recordings_root_path()).as_posix()
+    _log(f"Recording renamed → {relative_path}")
+    return jsonify({"status": "ok", "path": relative_path})
 
 
 @app.route("/api/start", methods=["POST"])

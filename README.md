@@ -52,6 +52,13 @@ meters), **Monitor** (quality selector and one play/stop control), **Library**
 (device, input, and recording format settings). On mobile, these are available through a
 bottom navigation bar; desktop uses the same navigation above the content.
 
+### Playback policy
+
+Only one Library recording can play at a time. Starting a Library playback
+suspends the browser's live monitor stream and restores the same monitor
+quality when the recording ends or is paused. This avoids competing audio
+output and releases the live stream connection while it is not audible.
+
 Navigation, theming, and monitor UI wiring are native ES modules in
 `static/js/`; the streaming PCM implementation remains in the page while it is
 incrementally extracted.

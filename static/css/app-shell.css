@@ -112,7 +112,7 @@
 
 .recording-actions {
   display: grid;
-  grid-template-columns: 14rem repeat(2, 2.75rem);
+  grid-template-columns: 14rem repeat(3, 2.75rem);
   flex-shrink: 0;
 }
 
@@ -237,7 +237,7 @@
 
   .recording-actions {
     width: 100%;
-    grid-template-columns: minmax(0, 1fr) repeat(2, 2.75rem);
+    grid-template-columns: minmax(0, 1fr) repeat(3, 2.75rem);
   }
 
   .recording-actions audio {

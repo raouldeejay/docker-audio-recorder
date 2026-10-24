@@ -154,6 +154,53 @@ class RecordingLibraryApiTests(unittest.TestCase):
         self.assertEqual(deleted.status_code, 200)
         self.assertFalse(recording.exists())
 
+    def test_renames_completed_recording_in_its_existing_folder(self):
+        album = Path(self.root.name, "album")
+        album.mkdir()
+        recording = album / "track.wav"
+        recording.write_bytes(b"RIFF")
+
+        renamed = self.client.patch(
+            "/api/recordings",
+            json={"path": "album/track.wav", "filename": "new title.wav"},
+        )
+
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(renamed.json["path"], "album/new_title.wav")
+        self.assertFalse(recording.exists())
+        self.assertTrue((album / "new_title.wav").exists())
+
+    def test_rejects_unsafe_conflicting_or_active_renames(self):
+        recording = Path(self.root.name, "track.aiff")
+        recording.write_bytes(b"FORM")
+        Path(self.root.name, "other.aiff").write_bytes(b"FORM")
+
+        traversal = self.client.patch(
+            "/api/recordings",
+            json={"path": "track.aiff", "filename": "../escape.aiff"},
+        )
+        extension = self.client.patch(
+            "/api/recordings",
+            json={"path": "track.aiff", "filename": "track.wav"},
+        )
+        conflict = self.client.patch(
+            "/api/recordings",
+            json={"path": "track.aiff", "filename": "other.aiff"},
+        )
+
+        self.assertEqual(traversal.status_code, 400)
+        self.assertEqual(extension.status_code, 400)
+        self.assertEqual(conflict.status_code, 409)
+
+        recorder_app.wav_recorder = SimpleNamespace(path=str(recording))
+        active = self.client.patch(
+            "/api/recordings",
+            json={"path": "track.aiff", "filename": "renamed.aiff"},
+        )
+
+        self.assertEqual(active.status_code, 409)
+        self.assertTrue(recording.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

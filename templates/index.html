@@ -1393,6 +1393,19 @@ function stopStream() {
     updateStreamStatus(false, null);
 }
 
+window.suspendMonitorForLibraryPlayback = () => {
+    if (!currentStreamUrl) return null;
+    const suspended = { quality: currentQuality };
+    stopStream();
+    return suspended;
+};
+
+window.resumeMonitorAfterLibraryPlayback = suspended => {
+    if (suspended && !currentStreamUrl) {
+        switchQuality(suspended.quality);
+    }
+};
+
 function updateStreamStatus(isActive, quality) {
     const indicator = document.getElementById("streamIndicator");
     const statusText = document.getElementById("streamStatusText");

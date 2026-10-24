@@ -1,6 +1,8 @@
 const list = document.getElementById("recordingList");
 const status = document.getElementById("libraryStatus");
 const refreshButton = document.getElementById("refreshLibrary");
+let activePlayer = null;
+let suspendedMonitor = null;
 
 function fileUrl(path, download = false) {
   const params = new URLSearchParams({ path });
@@ -69,6 +71,50 @@ async function deleteRecording(recording, entry) {
   setStatus(remaining ? `${remaining} recording${remaining === 1 ? "" : "s"}` : "No recordings yet.");
 }
 
+function restoreMonitorIfIdle() {
+  if (activePlayer || !suspendedMonitor) return;
+  const monitor = suspendedMonitor;
+  suspendedMonitor = null;
+  window.resumeMonitorAfterLibraryPlayback?.(monitor);
+}
+
+function stopActivePlayer(except = null) {
+  if (!activePlayer || activePlayer === except) return;
+  activePlayer.pause();
+  activePlayer.currentTime = 0;
+}
+
+function startPlayback(player) {
+  stopActivePlayer(player);
+  activePlayer = player;
+  if (!suspendedMonitor) {
+    suspendedMonitor = window.suspendMonitorForLibraryPlayback?.() || null;
+  }
+}
+
+function finishPlayback(player) {
+  queueMicrotask(() => {
+    if (activePlayer !== player || !player.paused) return;
+    activePlayer = null;
+    restoreMonitorIfIdle();
+  });
+}
+
+async function renameRecording(recording) {
+  const currentName = recording.path.split("/").pop();
+  const filename = window.prompt("Rename recording", currentName);
+  if (filename === null) return;
+
+  const response = await fetch("/api/recordings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: recording.path, filename }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Failed to rename recording");
+  await loadRecordings();
+}
+
 function renderRecordings(recordings) {
   list.replaceChildren();
   if (!recordings.length) {
@@ -99,6 +145,8 @@ function renderRecordings(recordings) {
     play.preload = "none";
     play.src = fileUrl(recording.path);
     play.setAttribute("aria-label", `Play ${recording.path}`);
+    play.addEventListener("play", () => startPlayback(play));
+    play.addEventListener("pause", () => finishPlayback(play));
     const download = document.createElement("a");
     download.href = fileUrl(recording.path, true);
     download.className = "library-download";
@@ -108,6 +156,19 @@ function renderRecordings(recordings) {
       "M12 3v12m0 0 4-4m-4 4-4-4",
       "M4 17v3h16v-3",
     ]));
+    const rename = createIconButton("Rename " + recording.path, "recording-rename", [
+      "M4 20h4l10.5-10.5-4-4L4 16v4",
+      "m12.5 6.5 4 4",
+    ], async () => {
+      rename.disabled = true;
+      try {
+        await renameRecording(recording);
+      } catch (error) {
+        setStatus(error.message || "Failed to rename recording", true);
+      } finally {
+        rename.disabled = false;
+      }
+    });
     const remove = createIconButton("Delete " + recording.path, "recording-delete", [
       "M4 7h16M10 11v6m4-6v6M9 7l1-3h4l1 3M6 7l1 14h10l1-14",
     ], async () => {
@@ -119,7 +180,7 @@ function renderRecordings(recordings) {
         remove.disabled = false;
       }
     });
-    actions.append(play, download, remove);
+    actions.append(play, download, rename, remove);
 
     entry.append(details, actions);
     list.append(entry);

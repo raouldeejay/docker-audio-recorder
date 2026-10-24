@@ -12,9 +12,9 @@ import fcntl
 import queue as queue_module
 from collections import deque
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, send_file
 from audio_recorder.recording import (
     AiffRecorder,
     WavRecorder,
@@ -641,6 +641,78 @@ def _recording_active():
             and direct_record_process.poll() is None
         )
     return bool(is_recording and wav_recorder is not None)
+
+
+RECORDING_MEDIA_TYPES = {
+    ".aif": "audio/aiff",
+    ".aiff": "audio/aiff",
+    ".wav": "audio/wav",
+}
+
+
+def _recordings_root_path():
+    """Return the resolved recordings root, creating it when necessary."""
+    root = Path(RECORDINGS_ROOT).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _recording_library_path(relative_path):
+    """Resolve an existing recording path without allowing filesystem escape."""
+    if not isinstance(relative_path, str) or not relative_path:
+        raise ValueError("Recording path is required")
+    if "\\" in relative_path:
+        raise ValueError("Recording path must use forward slashes")
+
+    relative = PurePosixPath(relative_path)
+    if relative.is_absolute() or any(part in ("", ".", "..") for part in relative.parts):
+        raise ValueError("Invalid recording path")
+
+    root = _recordings_root_path()
+    requested = root.joinpath(*relative.parts)
+    if requested.is_symlink():
+        raise ValueError("Recording path must not be a symlink")
+    candidate = requested.resolve()
+    if candidate == root or root not in candidate.parents:
+        raise ValueError("Invalid recording path")
+    if not candidate.is_file() or candidate.is_symlink():
+        raise FileNotFoundError("Recording not found")
+    if candidate.suffix.lower() not in RECORDING_MEDIA_TYPES:
+        raise ValueError("Unsupported recording format")
+    return candidate
+
+
+def _active_recording_path():
+    path = None
+    if wav_recorder is not None:
+        path = wav_recorder.path
+    elif direct_record_path is not None:
+        path = direct_record_path
+    return Path(path).resolve() if path else None
+
+
+def list_recordings():
+    """List supported recordings below the configured recordings root."""
+    root = _recordings_root_path()
+    recordings = []
+    for candidate in root.rglob("*"):
+        if not candidate.is_file() or candidate.is_symlink():
+            continue
+        resolved = candidate.resolve()
+        if root not in resolved.parents or resolved.suffix.lower() not in RECORDING_MEDIA_TYPES:
+            continue
+        stat = resolved.stat()
+        recordings.append(
+            {
+                "path": resolved.relative_to(root).as_posix(),
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.datetime.fromtimestamp(
+                    stat.st_mtime, tz=datetime.timezone.utc
+                ).isoformat(),
+                "media_type": RECORDING_MEDIA_TYPES[resolved.suffix.lower()],
+            }
+        )
+    return sorted(recordings, key=lambda recording: recording["modified_at"], reverse=True)
 
 
 def _stop_capture_process_only():
@@ -1293,6 +1365,57 @@ def low_bandwidth_stream():
 def api_logs():
     """Return recent debug logs."""
     return jsonify({"logs": recorder_log[-50:]})
+
+
+@app.route("/api/recordings")
+def api_list_recordings():
+    """List recordings available for playback and management."""
+    return jsonify({"recordings": list_recordings()})
+
+
+@app.route("/api/recordings/file")
+def api_recording_file():
+    """Serve one validated recording for inline playback or download."""
+    try:
+        recording = _recording_library_path(request.args.get("path"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+
+    download = request.args.get("download") == "1"
+    media_type = RECORDING_MEDIA_TYPES[recording.suffix.lower()]
+    return send_file(
+        recording,
+        mimetype=media_type,
+        as_attachment=download,
+        download_name=recording.name,
+        conditional=True,
+    )
+
+
+@app.route("/api/recordings", methods=["DELETE"])
+def api_delete_recording():
+    """Delete a completed, validated recording."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        recording = _recording_library_path(payload.get("path"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+
+    if recording == _active_recording_path():
+        return jsonify({"error": "Cannot delete the active recording"}), 409
+
+    try:
+        recording.unlink()
+    except OSError as e:
+        _log(f"Failed to delete recording {recording}: {e}")
+        return jsonify({"error": "Failed to delete recording"}), 500
+
+    _log(f"Recording deleted → {recording}")
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/start", methods=["POST"])

@@ -602,9 +602,13 @@
     </div>
     </section>
 
-    <section class="app-view app-view--placeholder" data-view="library" hidden>
+    <section class="app-view library-view" data-view="library" hidden>
         <h2>Library</h2>
-        <p>Recording browsing and playback will appear here once the library API is added.</p>
+        <div class="library-toolbar">
+            <p id="libraryStatus" class="library-status" role="status" aria-live="polite">Loading recordings…</p>
+            <button id="refreshLibrary" type="button">Refresh</button>
+        </div>
+        <ul id="recordingList" class="recording-list" aria-live="polite"></ul>
     </section>
     </main>
     

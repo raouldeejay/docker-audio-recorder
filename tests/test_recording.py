@@ -1,7 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
+import app as recorder_app
 from audio_recorder.hardware import (
     find_input_selector,
     parse_capture_cards,
@@ -87,6 +89,70 @@ class HardwareParsingTests(unittest.TestCase):
         self.assertEqual(caps["samplerates"], [44100, 48000])
         self.assertEqual(caps["channels"], 2)
         self.assertEqual(parse_input_source(": values=1"), "IEC958 In")
+
+
+class RecordingLibraryApiTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.TemporaryDirectory()
+        self.original_root = recorder_app.RECORDINGS_ROOT
+        self.original_recorder = recorder_app.wav_recorder
+        self.original_direct_path = recorder_app.direct_record_path
+        recorder_app.RECORDINGS_ROOT = self.root.name
+        recorder_app.wav_recorder = None
+        recorder_app.direct_record_path = None
+        self.client = recorder_app.app.test_client()
+
+    def tearDown(self):
+        recorder_app.RECORDINGS_ROOT = self.original_root
+        recorder_app.wav_recorder = self.original_recorder
+        recorder_app.direct_record_path = self.original_direct_path
+        self.root.cleanup()
+
+    def test_lists_and_serves_supported_recordings(self):
+        nested = Path(self.root.name, "album")
+        nested.mkdir()
+        recording = nested / "track.wav"
+        recording.write_bytes(b"RIFF")
+        Path(self.root.name, "notes.txt").write_text("not audio")
+
+        listing = self.client.get("/api/recordings")
+
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json["recordings"][0]["path"], "album/track.wav")
+        self.assertEqual(listing.json["recordings"][0]["media_type"], "audio/wav")
+
+        response = self.client.get("/api/recordings/file?path=album%2Ftrack.wav")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"RIFF")
+        self.assertEqual(response.mimetype, "audio/wav")
+        response.close()
+
+    def test_rejects_path_traversal_and_symlinks(self):
+        Path(self.root.name, "track.wav").write_bytes(b"RIFF")
+        Path(self.root.name, "shortcut.wav").symlink_to(Path(self.root.name, "track.wav"))
+
+        traversal = self.client.get("/api/recordings/file?path=..%2Fetc%2Fpasswd")
+        symlink = self.client.get("/api/recordings/file?path=shortcut.wav")
+
+        self.assertEqual(traversal.status_code, 400)
+        self.assertEqual(symlink.status_code, 400)
+
+    def test_deletes_completed_but_not_active_recordings(self):
+        recording = Path(self.root.name, "track.aiff")
+        recording.write_bytes(b"FORM")
+
+        recorder_app.wav_recorder = SimpleNamespace(path=str(recording))
+        active = self.client.delete("/api/recordings", json={"path": "track.aiff"})
+
+        self.assertEqual(active.status_code, 409)
+        self.assertTrue(recording.exists())
+
+        recorder_app.wav_recorder = None
+        deleted = self.client.delete("/api/recordings", json={"path": "track.aiff"})
+
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse(recording.exists())
 
 
 if __name__ == "__main__":

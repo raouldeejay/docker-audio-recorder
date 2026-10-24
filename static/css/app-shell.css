@@ -50,14 +50,81 @@
   min-width: 0;
 }
 
-.app-view--placeholder {
+.library-view {
   margin-top: 1.5rem;
-  padding: 2rem;
+}
+
+.library-toolbar,
+.recording-entry,
+.recording-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.library-toolbar {
+  justify-content: space-between;
+}
+
+.library-status {
+  margin: 0;
   color: var(--sl-color-neutral-600);
-  text-align: center;
+}
+
+.recording-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.recording-entry {
+  justify-content: space-between;
+  padding: 0.85rem;
   background: var(--sl-color-neutral-50);
-  border: 1px dashed var(--sl-color-neutral-300);
-  border-radius: var(--sl-border-radius-large);
+  border: 1px solid var(--sl-color-neutral-200);
+  border-radius: var(--sl-border-radius-medium);
+}
+
+.recording-details {
+  min-width: 0;
+}
+
+.recording-name,
+.recording-meta {
+  display: block;
+}
+
+.recording-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recording-meta {
+  margin-top: 0.2rem;
+  color: var(--sl-color-neutral-600);
+  font-size: 0.8rem;
+}
+
+.recording-actions {
+  flex-shrink: 0;
+}
+
+.recording-actions button {
+  margin: 0;
+}
+
+.recording-actions .recording-delete {
+  background: var(--sl-color-danger-600);
+}
+
+.recording-actions .recording-delete:hover:not(:disabled) {
+  background: var(--sl-color-danger-700);
+}
 }
 
 .monitor-quality {
@@ -124,5 +191,18 @@
 
   .container {
     padding-bottom: calc(1rem + var(--app-nav-height) + env(safe-area-inset-bottom));
+  }
+
+  .recording-entry {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .recording-actions {
+    width: 100%;
+  }
+
+  .recording-actions button {
+    flex: 1;
   }
 }

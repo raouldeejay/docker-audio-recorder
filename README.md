@@ -45,8 +45,8 @@ The page follows the device light/dark preference by default; use the
 
 The responsive app shell has four destinations: **Dashboard** (recording and
 meters), **Monitor** (quality selector and one play/stop control), **Library**
-(reserved for the future recordings API), and **Settings** (device, input, and
-recording format settings). On mobile, these are available through a
+(browse, play, download, and delete completed recordings), and **Settings**
+(device, input, and recording format settings). On mobile, these are available through a
 bottom navigation bar; desktop uses the same navigation above the content.
 
 Navigation, theming, and monitor UI wiring are native ES modules in
@@ -132,8 +132,9 @@ Recordings are saved to `./recordings/` on the host machine. This directory is m
 - Check if container is running: `docker-compose ps`
 - Verify port binding: `docker-compose logs`
 
-## Future Enhancements
+## Feature roadmap
 
+- [x] Browse, play, download, and delete completed recordings in the **Library** view
 - [ ] Metadata support (title, artist, description)
 - [ ] Discogs integration: look up a release and read metadata (artist, title, label, year, track list) to tag files and suggest folder/file names, similar to Kid3's Discogs import
 - [ ] Phase scope display (stereo correlation / goniometer) in the live monitor

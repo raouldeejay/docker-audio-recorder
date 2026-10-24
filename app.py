@@ -2,7 +2,6 @@ import os
 import struct
 import subprocess
 import signal
-import re
 import datetime
 import threading
 import time
@@ -16,7 +15,21 @@ from collections import deque
 from pathlib import Path
 
 from flask import Flask, render_template, request, jsonify, Response
-from werkzeug.utils import secure_filename
+from audio_recorder.recording import (
+    AiffRecorder,
+    WavRecorder,
+    clean_recording_filename,
+    get_audio_formats,
+    normalize_file_format as _normalize_file_format,
+    resolve_recording_path,
+    wav_header as _wav_header,
+)
+from audio_recorder.hardware import (
+    find_input_selector,
+    parse_capture_cards,
+    parse_input_source,
+    read_capture_hwcaps,
+)
 
 app = Flask(__name__)
 
@@ -546,18 +559,7 @@ def list_capture_cards():
             _log(f"Failed to list cards: {e}")
             return []
 
-        current_card = None
-
-        for line in output.splitlines():
-            m = re.search(r"card (\d+): ([^[]+)\[([^\]]+)\]", line)
-            if m:
-                current_card = {"card": int(m.group(1)), "name": m.group(3).strip()}
-
-            d = re.search(r"device (\d+): ([^[]+)\[([^\]]+)\]", line)
-            if d and current_card:
-                current_card["device"] = int(d.group(1))
-                cards.append(current_card)
-                current_card = None
+        cards = parse_capture_cards(output)
 
     return cards
 
@@ -585,46 +587,8 @@ def detect_capture_card():
 def get_hwcaps_non_exclusive(card_index, device_index):
     global hwcaps, channels
 
-    id_file = Path(f"/mnt/asound/card{card_index}/id")
-    stream_file = Path(f"/mnt/asound/card{card_index}/stream0")
-
-    if id_file.exists():
-        hwcaps["name"] = id_file.read_text().strip()
-
-    if stream_file.exists():
-        content = stream_file.read_text()
-        sections = re.split(r'^(Playback|Capture):', content, flags=re.MULTILINE)
-        capture_block = ""
-        current_mode = None
-
-        for item in sections:
-            if item in ["Playback", "Capture"]:
-                current_mode = item
-                continue
-            if current_mode == "Capture":
-                capture_block = item
-                break
-
-        if capture_block:
-            bits_found = re.findall(r'Bits:\s*(\d+)', capture_block)
-            rates_lines = re.findall(r'Rates:\s*(.+)', capture_block)
-            channels_found = re.findall(r'Channels:\s*(\d+)', capture_block)
-
-            bitdepths = sorted({int(b) for b in bits_found})
-            samplerates = []
-            for line in rates_lines:
-                samplerates.extend(int(r.strip()) for r in line.split(',') if r.strip().isdigit())
-            samplerates = sorted(set(samplerates))
-
-            channels = max((int(c) for c in channels_found), default=2)
-            hwcaps["bitdepths"] = bitdepths or [16]
-            hwcaps["samplerates"] = samplerates or [48000]
-            hwcaps["channels"] = channels
-    else:
-        # Fallback defaults if sysfs doesn't exist
-        hwcaps["bitdepths"] = [16, 24]
-        hwcaps["samplerates"] = [48000]
-        hwcaps["channels"] = 2
+    hwcaps.update(read_capture_hwcaps(card_index))
+    channels = hwcaps["channels"]
 
     return hwcaps
 
@@ -636,15 +600,7 @@ def detect_input_selector(card):
     except subprocess.CalledProcessError:
         return None
 
-    blocks = output.split("numid=")[1:]
-    for block in blocks:
-        if "ENUMERATED" in block and "Line" in block and "IEC958 In" in block:
-            try:
-                numid = int(block.split(",")[0])
-                return numid
-            except (ValueError, IndexError):
-                pass
-    return None
+    return find_input_selector(output)
 
 
 def get_input_source(card, numid):
@@ -656,13 +612,7 @@ def get_input_source(card, numid):
     except subprocess.CalledProcessError:
         return "Line"
 
-    # Match the value line only — metadata also contains "values=1" (value count).
-    for line in output.splitlines():
-        s = line.strip()
-        if s.startswith(": values="):
-            raw = s.split("=", 1)[1].split(",")[0].strip()
-            return "Line" if raw == "0" else "IEC958 In"
-    return "Line"
+    return parse_input_source(output)
 
 
 def set_input_source(card, numid, source):
@@ -679,260 +629,8 @@ def set_input_source(card, numid, source):
         raise
 
 
-# ------------------------------------------------------------
-# FILENAME GENERATION
-# ------------------------------------------------------------
-
-def generate_filename(ext="aiff"):
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    ext = (ext or "aiff").lstrip(".").lower()
-    if ext == "aif":
-        ext = "aiff"
-    return f"recording_{ts}.{ext}"
-
-
-def clean_recording_filename(filename, file_format):
-    """Return a safe, canonical recording filename and its format."""
-    filename = filename.strip()
-    if not filename:
-        ext = "aiff" if file_format == "aiff" else "wav"
-        return generate_filename(ext), file_format
-
-    lower = filename.lower()
-    if lower.endswith(".aif"):
-        filename = filename[:-4]
-        file_format = "aiff"
-    elif lower.endswith(".aiff"):
-        filename = filename[:-5]
-        file_format = "aiff"
-    elif lower.endswith(".wav"):
-        filename = filename[:-4]
-        file_format = "wav"
-
-    ext = "aiff" if file_format == "aiff" else "wav"
-    # Each "/" separated part is sanitized on its own, so "." / ".." can never survive.
-    parts = [secure_filename(p) for p in re.split(r"[\\/]+", filename)]
-    parts = [p for p in parts if p]
-    if not parts:
-        raise ValueError("Filename must contain at least one letter or number")
-    if len(parts) > 8:
-        raise ValueError("Too many folder levels (maximum 7)")
-    if any(len(p) > 255 - len(ext) - 1 for p in parts):
-        raise ValueError("Filename is too long (maximum 255 characters per part)")
-
-    return "/".join(parts[:-1] + [f"{parts[-1]}.{ext}"]), file_format
-
-
-def resolve_recording_path(relname):
-    """Create parent folders under RECORDINGS_ROOT and return a collision-free relative name.
-
-    Existing files are never overwritten (suffix _1, _2, ...). A folder part that
-    clashes with an existing file gets a suffix too.
-    """
-    root = os.path.realpath(RECORDINGS_ROOT)
-    parts = relname.split("/")
-    current = root
-    resolved = []
-    for part in parts[:-1]:
-        candidate, n = part, 0
-        while os.path.exists(os.path.join(current, candidate)) and not os.path.isdir(
-            os.path.join(current, candidate)
-        ):
-            n += 1
-            candidate = f"{part}_{n}"
-        current = os.path.join(current, candidate)
-        resolved.append(candidate)
-    if os.path.commonpath([root, os.path.realpath(current)]) != root:
-        raise ValueError("Invalid recording path")
-    os.makedirs(current, exist_ok=True)
-
-    stem, ext = os.path.splitext(parts[-1])
-    candidate, n = parts[-1], 0
-    while os.path.exists(os.path.join(current, candidate)):
-        n += 1
-        candidate = f"{stem}_{n}{ext}"
-    resolved.append(candidate)
-    return "/".join(resolved)
-
-
-def get_audio_formats(bitdepth):
-    if bitdepth == 8:
-        return "U8", "u8"
-    elif bitdepth == 16:
-        return "S16_LE", "s16le"
-    elif bitdepth == 24:
-        return "S24_3LE", "s24le"
-    elif bitdepth == 32:
-        return "S32_LE", "s32le"
-    else:
-        raise ValueError(f"Unsupported bit depth: {bitdepth}")
-
-
-def _normalize_file_format(fmt):
-    fmt = (fmt or "aiff").strip().lower().lstrip(".")
-    if fmt == "wav":
-        return "wav"
-    return "aiff"
-
-
-# ------------------------------------------------------------
-# RECORDING — PCM file from shared arecord (monitor stays alive)
-# ------------------------------------------------------------
 def _active_channel_count():
     return int(hwcaps.get("channels") or channels or 2)
-
-
-def _wav_header(rate, ch, depth, data_bytes=0x7FFFF000):
-    """Classic PCM WAV header (fmt=1). Large data_bytes keeps live HTTP streams open."""
-    block_align = ch * (depth // 8)
-    byte_rate = rate * block_align
-    return struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF",
-        36 + data_bytes,
-        b"WAVE",
-        b"fmt ",
-        16,  # PCM fmt chunk size
-        1,   # PCM format
-        ch,
-        rate,
-        byte_rate,
-        block_align,
-        depth,
-        b"data",
-        data_bytes,
-    )
-
-
-def _pcm_le_to_be(pcm, depth):
-    """Byte-swap little-endian capture PCM to big-endian (AIFF)."""
-    width = max(1, int(depth) // 8)
-    if width == 1 or not pcm:
-        return pcm
-    out = bytearray(len(pcm))
-    aligned = (len(pcm) // width) * width
-    # Strided slice copy per byte lane: exact swap, no per-sample Python loop (GIL).
-    for lane in range(width):
-        out[lane:aligned:width] = pcm[width - 1 - lane:aligned:width]
-    if aligned < len(pcm):
-        out[aligned:] = pcm[aligned:]
-    return bytes(out)
-
-
-def _aiff_rate_extended(sample_rate):
-    """80-bit SANE/AIFF extended float for sample rate (big-endian)."""
-    import math
-
-    rate = float(sample_rate)
-    if rate <= 0:
-        return b"\x00" * 10
-    exp = int(math.floor(math.log(rate, 2)))
-    mantissa = int(rate * (2.0 ** (63 - exp)))
-    exp = exp + 16383
-    return struct.pack(">HQ", exp & 0xFFFF, mantissa & 0xFFFFFFFFFFFFFFFF)
-
-
-def _aiff_header(rate, ch, depth, data_bytes=0):
-    """
-    Classic AIFF (FORM/COMM/SSND). PCM is big-endian.
-    Metadata chunks (NAME/AUTH/ANNO) can be inserted before SSND later.
-    """
-    ch = int(ch)
-    depth = int(depth)
-    block_align = ch * (depth // 8)
-    frames = (data_bytes // block_align) if block_align else 0
-    # COMM: ckSize(4) + numChannels(2) + numSampleFrames(4) + sampleSize(2) + rate(10)
-    comm = struct.pack(">LHLH", 18, ch, frames, depth) + _aiff_rate_extended(rate)
-    # SSND: chunk size includes 8 bytes offset/blockSize + PCM
-    ssnd_data_size = 8 + data_bytes
-    # FORM size = file size - 8
-    form_size = 4 + (4 + len(comm)) + (8 + ssnd_data_size)
-    return (
-        b"FORM"
-        + struct.pack(">I", form_size)
-        + b"AIFF"
-        + b"COMM"
-        + comm
-        + b"SSND"
-        + struct.pack(">III", ssnd_data_size, 0, 0)  # size, offset, blockSize
-    )
-
-
-class WavRecorder:
-    """Write capture PCM into a classic PCM WAV (fmt=1) with no codec conversion."""
-
-    format_name = "wav"
-
-    def __init__(self, path, rate, channels, depth):
-        self.path = path
-        self.rate = int(rate)
-        self.channels = int(channels)
-        self.depth = int(depth)
-        self.data_bytes = 0
-        self._lock = threading.Lock()
-        # 1MiB buffer — writer thread batches; avoid tiny syscalls on the capture path.
-        self._fh = open(path, "wb", buffering=1024 * 1024)
-        # Placeholder sizes; patched in close().
-        self._fh.write(_wav_header(self.rate, self.channels, self.depth, data_bytes=0))
-
-    def write(self, pcm):
-        if not pcm:
-            return
-        with self._lock:
-            self._fh.write(pcm)
-            self.data_bytes += len(pcm)
-
-    def close(self):
-        with self._lock:
-            if self._fh.closed:
-                return self.data_bytes
-            self._fh.seek(0)
-            self._fh.write(
-                _wav_header(self.rate, self.channels, self.depth, data_bytes=self.data_bytes)
-            )
-            self._fh.flush()
-            self._fh.close()
-            return self.data_bytes
-
-
-class AiffRecorder:
-    """Write capture PCM as classic AIFF (big-endian PCM). Hook point for metadata later."""
-
-    format_name = "aiff"
-
-    def __init__(self, path, rate, channels, depth):
-        self.path = path
-        self.rate = int(rate)
-        self.channels = int(channels)
-        self.depth = int(depth)
-        self.data_bytes = 0
-        self._lock = threading.Lock()
-        # Future: NAME / AUTH / ANNO / COMT chunks before SSND for tags.
-        self.metadata = {}
-        self._fh = open(path, "wb", buffering=1024 * 1024)
-        self._fh.write(_aiff_header(self.rate, self.channels, self.depth, data_bytes=0))
-
-    def write(self, pcm):
-        if not pcm:
-            return
-        be = _pcm_le_to_be(pcm, self.depth)
-        with self._lock:
-            self._fh.write(be)
-            self.data_bytes += len(be)
-
-    def close(self):
-        with self._lock:
-            if self._fh.closed:
-                return self.data_bytes
-            # Rewrite header with final sizes. Metadata injection can splice chunks here later.
-            self._fh.seek(0)
-            header = _aiff_header(
-                self.rate, self.channels, self.depth, data_bytes=self.data_bytes
-            )
-            self._fh.write(header)
-            self._fh.flush()
-            self._fh.close()
-            return self.data_bytes
 
 
 def _recording_active():
@@ -1625,7 +1323,7 @@ def _api_start():
         filename, file_format = clean_recording_filename(
             requested_filename, file_format
         )
-        filename = resolve_recording_path(filename)
+        filename = resolve_recording_path(filename, RECORDINGS_ROOT)
     except (ValueError, OSError) as e:
         return jsonify({"error": str(e)}), 400
 

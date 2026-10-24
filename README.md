@@ -41,6 +41,18 @@ in `static/vendor/shoelace`. The UI does not require browser internet access.
 The page follows the device light/dark preference by default; use the
 **Theme** control in the header to persist a System, Light, or Dark preference.
 
+### Interface structure
+
+The responsive app shell has four destinations: **Dashboard** (recording and
+meters), **Monitor** (quality selector and one play/stop control), **Library**
+(reserved for the future recordings API), and **Settings** (device, input, and
+recording format settings). On mobile, these are available through a
+bottom navigation bar; desktop uses the same navigation above the content.
+
+Navigation, theming, and monitor UI wiring are native ES modules in
+`static/js/`; the streaming PCM implementation remains in the page while it is
+incrementally extracted.
+
 ### Optional PipeWire sink monitor
 
 The browser monitor works with the base configuration. To enable the optional

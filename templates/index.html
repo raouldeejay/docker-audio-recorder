@@ -16,6 +16,7 @@
             document.documentElement.classList.toggle("sl-theme-light", !dark);
         } catch (e) {}
     </script>
+    <script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
     <style>
         *, *::before, *::after { box-sizing: border-box; }
 
@@ -77,21 +78,6 @@
 
         .app-header h1 {
             margin: 0;
-        }
-
-        .theme-switch {
-            flex-shrink: 0;
-            white-space: nowrap;
-        }
-
-        .theme-switch select {
-            margin: 0 0 0 0.35rem;
-            padding: 0.4rem 0.55rem;
-            color: var(--sl-color-neutral-900);
-            background: var(--sl-color-neutral-0);
-            border: 1px solid var(--sl-color-neutral-300);
-            border-radius: var(--sl-border-radius-medium);
-            color-scheme: inherit;
         }
 
         button {
@@ -221,14 +207,8 @@
             color: #5cb85c;
         }
 
-        .stream-section {
-            background: var(--sl-color-neutral-50);
-            border: 1px solid var(--sl-color-neutral-200);
-            border-radius: var(--sl-border-radius-medium);
-            padding: 20px;
-            margin-top: 20px;
-            overflow: visible;
-            min-width: 0;
+        .monitor-view {
+            margin-top: 2rem;
         }
 
         .stream-controls {
@@ -253,31 +233,37 @@
             gap: 1rem;
         }
 
-        .settings-grid input {
-            grid-column: 1 / -1;
-        }
-
-        .settings-grid label[for="filename"] {
-            grid-column: 1 / -1;
-        }
-
         .settings-grid select, .settings-grid input, .section > select {
             width: 100%;
         }
 
-        .status-badge {
-            display: inline-block;
-            padding: 0.2rem 0.55rem;
-            color: var(--sl-color-neutral-700);
-            background: var(--sl-color-neutral-100);
-            border-radius: 999px;
-            font-size: 0.85rem;
-            font-weight: 600;
+        .recording-setup {
+            max-width: 28rem;
+            margin: 0 auto 1.25rem;
         }
 
-        .status-badge.recording {
-            color: var(--sl-color-danger-700);
-            background: var(--sl-color-danger-100);
+        .recording-setup input {
+            width: 100%;
+            margin-left: 0;
+        }
+
+        .settings-summary {
+            margin: 0.6rem 0 0;
+            color: var(--sl-color-neutral-600);
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
         }
 
         .stream-status {
@@ -430,10 +416,6 @@
             h1 { font-size: 1.45rem; }
             h2 { font-size: 1.15rem; }
 
-            .stream-section {
-                padding: 14px;
-            }
-
             .stream-controls button {
                 min-width: calc(50% - 6px);
                 margin-right: 0;
@@ -441,10 +423,6 @@
 
             .settings-grid {
                 grid-template-columns: 1fr;
-            }
-
-            .settings-grid input {
-                grid-column: auto;
             }
 
             #audioPlayer {
@@ -458,6 +436,7 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app-shell.css') }}">
 </head>
 
 <body>
@@ -465,21 +444,33 @@
 
     <header class="app-header">
         <h1>Docker Audio Recorder</h1>
-        <label class="theme-switch" for="themeMode">
-            Theme
-            <select id="themeMode">
-                <option value="system">System</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-            </select>
-        </label>
     </header>
     <div class="hostname">Host: {{ hostname }}</div>
+    <p id="flashMsg" role="status" aria-live="polite"></p>
 
-    <!-- STATUS -->
+    <nav class="app-nav app-nav--desktop" aria-label="Primary navigation">
+        <button class="nav-item is-active" type="button" data-view-target="dashboard" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
+            <span>Dashboard</span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="monitor">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2M4 14v4a2 2 0 0 0 2 2h2v-8H6a2 2 0 0 0-2 2m16 0v4a2 2 0 0 1-2 2h-2v-8h2a2 2 0 0 1 2 2"/></svg>
+            <span>Monitor</span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="library">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM10 12v4m3-6v6m3-4v4"/></svg>
+            <span>Library</span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-5 2v4"/></svg>
+            <span>Settings</span>
+        </button>
+    </nav>
+
+    <main class="app-views">
+    <section class="app-view is-active" data-view="dashboard">
     <div class="section">
-        <h2>Status</h2>
-        <p>Recording: <span id="recordingStatus" class="status-badge">Idle</span></p>
+        <span id="recordingStatus" class="sr-only" role="status" aria-live="polite">Idle</span>
         <div class="vu-section">
             <div class="vu-row">
                 <span class="vu-label">L</span>
@@ -501,52 +492,47 @@
             </div>
         </div>
     </div>
-
-    <!-- CARD LIST -->
+    <!-- RECORDING CONTROLS -->
     <div class="section">
-        <h2>Capture Card</h2>
-
-        <label for="cardSelect">Capture device</label>
-        <select id="cardSelect" {% if cards|length <= 1 %}disabled{% endif %}>
-            {% if not cards %}
-                <option value="">No capture cards found</option>
-            {% endif %}
-            {% for c in cards %}
-                <option value="{{ c.card }}:{{ c.device }}"
-                    {% if c.card == selected_card and c.device == selected_device %}selected{% endif %}>
-                    {{ c.name }} (card {{ c.card }}, device {{ c.device }})
-                </option>
-            {% endfor %}
-        </select>
+        <div class="recording-control">
+            <button id="recordAction" class="record-action" type="button"
+                    onclick="toggleRecording()" aria-label="Start recording" aria-pressed="false">
+                <span class="record-action__icon" aria-hidden="true"></span>
+            </button>
+            <span id="recordActionLabel" class="record-action-label">Tap to record</span>
+        </div>
+        <div class="recording-setup">
+            <label for="filename">Filename</label>
+            <input id="filename" type="text" placeholder="Leave empty for auto filename">
+            <p id="recordingSetupSummary" class="settings-summary">Loading recording setup…</p>
+        </div>
     </div>
+    </section>
 
-    <!-- SPDIF / LINE SELECTOR -->
+    <section class="app-view" data-view="settings" hidden>
+    <div class="section settings-group">
+        <h2>Audio</h2>
+        <div class="settings-grid">
+            <label for="cardSelect">Capture device</label>
+            <select id="cardSelect" {% if cards|length <= 1 %}disabled{% endif %}>
+                {% if not cards %}
+                    <option value="">No capture cards found</option>
+                {% endif %}
+                {% for c in cards %}
+                    <option value="{{ c.card }}:{{ c.device }}"
+                        {% if c.card == selected_card and c.device == selected_device %}selected{% endif %}>
+                        {{ c.name }} (card {{ c.card }}, device {{ c.device }})
+                    </option>
+                {% endfor %}
+            </select>
+
     {% if selector_present %}
-    <div class="section">
-        <h2>Input Source (Line / SPDIF)</h2>
-
-            <p>Current source:
-                <span id="currentSource" class="current-source">{{ input_source }}</span>
-            </p>
-
             <label for="inputSource">Source</label>
             <select id="inputSource">
                 <option value="Line" {% if input_source == "Line" %}selected{% endif %}>Line (Analog)</option>
                 <option value="IEC958 In" {% if input_source == "IEC958 In" %}selected{% endif %}>SPDIF (IEC958)</option>
             </select>
-
-            <button type="button" onclick="setInputSource()">Apply</button>
-
-    </div>
     {% endif %}
-
-    <!-- RECORDING SETTINGS -->
-    <div class="section">
-        <h2>Recording Settings</h2>
-
-        <div class="settings-grid">
-            <label for="filename">Filename</label>
-            <input id="filename" type="text" placeholder="Leave empty for auto filename">
 
             <label for="samplerate">Sample rate</label>
             <select id="samplerate">
@@ -569,37 +555,33 @@
         </div>
     </div>
 
-    <!-- RECORDING CONTROLS -->
-    <div class="section">
-        <h2>Recording</h2>
-
-        <div class="recording-control">
-            <button id="recordAction" class="record-action" type="button"
-                    onclick="toggleRecording()" aria-label="Start recording" aria-pressed="false">
-                <span class="record-action__icon" aria-hidden="true"></span>
-            </button>
-            <span id="recordActionLabel" class="record-action-label">Tap to record</span>
+    <div class="section settings-group">
+        <h2>General</h2>
+        <div class="settings-grid">
+            <label for="themeMode">Theme</label>
+            <select id="themeMode">
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
         </div>
-        <p id="flashMsg"></p>
-
     </div>
-    
-    <!-- LIVE STREAM MONITORING -->
-    <div class="stream-section">
-        <h2>🔴 Live Stream Monitoring</h2>
+    </section>
+
+    <section class="app-view" data-view="monitor" hidden>
+    <div class="monitor-view">
+        <h2>Live Stream Monitoring</h2>
         
-        <p>Monitor the audio stream in real-time. Switch between quality levels based on your network:</p>
+        <p>Choose a monitor format, then start or stop playback with one control.</p>
 
         <div class="stream-controls">
-            <button id="qualityHighBtn" class="active" type="button" onclick="switchQuality('high')">
-                Studio (lossless PCM)
-            </button>
-            <button id="qualityLowBtn" type="button" onclick="switchQuality('low')">
-                Low bandwidth (AAC, 256 kbps)
-            </button>
-            <button id="stopStreamBtn" type="button" onclick="stopStream()">
-                Stop Stream
-            </button>
+            <label class="monitor-quality" for="monitorQuality">Quality
+                <select id="monitorQuality">
+                    <option value="high">Studio PCM (lossless)</option>
+                    <option value="low">Low bandwidth AAC (256 kbps)</option>
+                </select>
+            </label>
+            <button id="monitorToggle" class="monitor-toggle" type="button">Play monitor</button>
         </div>
 
         <div class="audio-wrap">
@@ -618,8 +600,34 @@
             <span id="sinkMonitorStatus" class="stream-status">Local low-latency monitor (source resolution)</span>
         </div>
     </div>
+    </section>
+
+    <section class="app-view app-view--placeholder" data-view="library" hidden>
+        <h2>Library</h2>
+        <p>Recording browsing and playback will appear here once the library API is added.</p>
+    </section>
+    </main>
     
 </div>
+
+<nav class="app-nav app-nav--mobile" aria-label="Primary navigation">
+    <button class="nav-item is-active" type="button" data-view-target="dashboard" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
+        <span>Home</span>
+    </button>
+    <button class="nav-item" type="button" data-view-target="monitor">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2M4 14v4a2 2 0 0 0 2 2h2v-8H6a2 2 0 0 0-2 2m16 0v4a2 2 0 0 1-2 2h-2v-8h2a2 2 0 0 1 2 2"/></svg>
+        <span>Monitor</span>
+    </button>
+    <button class="nav-item" type="button" data-view-target="library">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM10 12v4m3-6v6m3-4v4"/></svg>
+        <span>Library</span>
+    </button>
+    <button class="nav-item" type="button" data-view-target="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-5 2v4"/></svg>
+        <span>Settings</span>
+    </button>
+</nav>
 
 <script>
 let previousBitdepth = null;
@@ -631,6 +639,7 @@ let sinkMonitorOn = false;
 let pcmPlayer = null; // Web Audio lossless PCM (Safari/iOS cannot play live WAV)
 let recordingActive = false;
 let recordingActionPending = false;
+window.isMonitorActive = () => Boolean(currentStreamUrl);
 
 function flash(msg, kind) {
     const el = document.getElementById("flashMsg");
@@ -1022,6 +1031,7 @@ async function startPcmPlayer(url, ctx) {
 
 document.getElementById("bitdepth").addEventListener("change", e => {
     previousBitdepth = parseInt(e.target.value);
+    renderRecordingSetupSummary();
     if (currentStreamUrl) {
         switchQuality(currentQuality);
     }
@@ -1029,6 +1039,7 @@ document.getElementById("bitdepth").addEventListener("change", e => {
 
 document.getElementById("samplerate").addEventListener("change", e => {
     previousSamplerate = parseInt(e.target.value);
+    renderRecordingSetupSummary();
     if (currentStreamUrl) {
         switchQuality(currentQuality);
     }
@@ -1078,11 +1089,11 @@ function refreshInputSource() {
         .then(r => r.json())
         .then(data => {
             if (data.supported) {
-                document.getElementById("currentSource").innerText = data.source;
                 const sel = document.getElementById("inputSource");
                 if (sel && data.source) {
                     sel.value = data.source;
                 }
+                renderRecordingSetupSummary();
             }
         });
 }
@@ -1284,16 +1295,33 @@ function loadCaps() {
 
             bd.value = _bd;
             sr.value = _sr;
+            renderRecordingSetupSummary();
             warmupEngine();
         });
 }
 
+function renderRecordingSetupSummary() {
+    const summary = document.getElementById("recordingSetupSummary");
+    if (!summary) return;
+
+    const card = document.getElementById("cardSelect");
+    const input = document.getElementById("inputSource");
+    const rate = document.getElementById("samplerate").value;
+    const depth = document.getElementById("bitdepth").value;
+    const format = document.getElementById("fileFormat").value.toUpperCase();
+    const parts = [
+        card?.selectedOptions[0]?.textContent.trim(),
+        input?.value,
+        rate ? `${Number(rate) / 1000} kHz` : null,
+        depth ? `${depth}-bit` : null,
+        format,
+    ].filter(Boolean);
+    summary.textContent = parts.join(" · ");
+}
+
 function switchQuality(quality) {
     currentQuality = quality;
-
-    // Update button states
-    document.getElementById("qualityHighBtn").classList.toggle("active", quality === "high");
-    document.getElementById("qualityLowBtn").classList.toggle("active", quality === "low");
+    document.getElementById("monitorQuality").value = quality;
 
     const samplerate = document.getElementById("samplerate").value;
     const bitdepth = document.getElementById("bitdepth").value;
@@ -1373,6 +1401,9 @@ function updateStreamStatus(isActive, quality) {
         indicator.classList.remove("active");
         statusText.textContent = "Stream: Idle";
     }
+    if (window.renderMonitorTransport) {
+        window.renderMonitorTransport(isActive);
+    }
 }
 
 function dbToPct(db) {
@@ -1418,39 +1449,11 @@ function startLevelsMeter() {
     };
 }
 
-function getThemeMode() {
-    try {
-        return localStorage.getItem("themeMode")
-            || (localStorage.getItem("theme") === "dark" ? "dark" : "system");
-    } catch (e) {
-        return "system";
-    }
-}
-
-function applyTheme(mode) {
-    const dark = mode === "dark"
-        || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    const root = document.documentElement;
-    root.classList.toggle("sl-theme-dark", dark);
-    root.classList.toggle("sl-theme-light", !dark);
-}
-
-function setThemeMode(mode) {
-    applyTheme(mode);
-    try {
-        localStorage.setItem("themeMode", mode);
-        localStorage.removeItem("theme");
-    } catch (e) {}
-}
-
 window.onload = function() {
-    const themeMode = document.getElementById("themeMode");
-    themeMode.value = getThemeMode();
-    themeMode.addEventListener("change", e => setThemeMode(e.target.value));
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-        if (getThemeMode() === "system") applyTheme("system");
-    });
     document.getElementById("cardSelect").addEventListener("change", setCard);
+    const inputSource = document.getElementById("inputSource");
+    if (inputSource) inputSource.addEventListener("change", setInputSource);
+    document.getElementById("fileFormat").addEventListener("change", renderRecordingSetupSummary);
 
     fetch("/api/cards")
         .then(r => r.json())
@@ -1461,6 +1464,7 @@ window.onload = function() {
         });
 
     refreshInputSource();
+    renderRecordingSetupSummary();
     pollStatus();
     setInterval(pollStatus, 1000);
     startLevelsMeter();

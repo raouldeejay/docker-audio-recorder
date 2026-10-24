@@ -28,10 +28,32 @@ cd docker-audio-recorder
 ### 2. Build and Run
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 The web interface will be available at `http://localhost:5000`
+
+### Interface and themes
+
+The interface uses native browser controls styled with the open-source
+[Shoelace](https://shoelace.style/) 2.20.1 light/dark theme tokens, vendored
+in `static/vendor/shoelace`. The UI does not require browser internet access.
+The page follows the device light/dark preference by default; use the
+**Theme** control in the header to persist a System, Light, or Dark preference.
+
+### Optional PipeWire sink monitor
+
+The browser monitor works with the base configuration. To enable the optional
+local PipeWire sink monitor, copy the host override and set its runtime path:
+
+```bash
+cp docker-compose.host.example.yml docker-compose.override.yml
+export PIPEWIRE_RUNTIME_DIR="/run/user/$(id -u)"
+docker compose up --build
+```
+
+`docker-compose.override.yml` is intentionally ignored because PipeWire socket
+paths and sink names are host-specific.
 
 ### 3. Access the Web Interface
 

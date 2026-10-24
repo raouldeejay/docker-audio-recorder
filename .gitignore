@@ -41,3 +41,4 @@ env/
 # Environment variables
 .env
 .env.local
+docker-compose.override.yml

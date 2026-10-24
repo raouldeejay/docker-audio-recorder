@@ -1,0 +1,10 @@
+services:
+  audio-recorder:
+    volumes:
+      - ${PIPEWIRE_RUNTIME_DIR:-/run/user/1000}/pipewire-0:${PIPEWIRE_RUNTIME_DIR:-/run/user/1000}/pipewire-0
+      - ${PIPEWIRE_RUNTIME_DIR:-/run/user/1000}/pulse:${PIPEWIRE_RUNTIME_DIR:-/run/user/1000}/pulse
+    environment:
+      XDG_RUNTIME_DIR: ${PIPEWIRE_RUNTIME_DIR:-/run/user/1000}
+      PULSE_SERVER: unix:${PIPEWIRE_RUNTIME_DIR:-/run/user/1000}/pulse/
+      PIPEWIRE_SINK: ${PIPEWIRE_SINK:-input.web_monitor}
+      PIPEWIRE_LATENCY: ${PIPEWIRE_LATENCY:-20ms}

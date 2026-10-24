@@ -1,30 +1,19 @@
 services:
-  #audio-recorder
   audio-recorder:
     build:
-      context: https://github.com/raouldeejay/docker-audio-recorder.git
+      context: .
       dockerfile: Dockerfile
     container_name: docker-audio-recorder
     restart: unless-stopped
     ports:
       - "5000:5000"
     volumes:
-      - /mnt/data/audio-recorder:/app/recordings
+      - ${RECORDINGS_DIR:-./recordings}:/app/recordings
       - /proc/asound:/mnt/asound:ro
-      # PipeWire native socket (Pulse dir is empty on PW-only hosts)
-      - /run/user/1000/pipewire-0:/run/user/1000/pipewire-0
-      - /run/user/1000/pulse:/run/user/1000/pulse
     group_add:
       - audio
     devices:
       - /dev/snd:/dev/snd  # Grant access to audio
     environment:
       - FLASK_ENV=production
-      - AUDIO_DEVICE=default  # Can be changed to specific device
-      - XDG_RUNTIME_DIR=/run/user/1000
-      - PULSE_SERVER=unix:/run/user/1000/pulse/
-      # Default: existing Web_Monitor_Split null sink; override if needed
-      - PIPEWIRE_SINK=input.web_monitor
-      - PIPEWIRE_LATENCY=20ms
     privileged: false
-    profiles: [rpi4,rpi5]

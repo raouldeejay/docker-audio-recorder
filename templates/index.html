@@ -1,16 +1,28 @@
 <!DOCTYPE html>
-<html>
+<html class="sl-theme-light" lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Docker Audio Recorder</title>
-
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/shoelace/themes/light.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/shoelace/themes/dark.css') }}">
+    <script>
+        try {
+            const savedMode = localStorage.getItem("themeMode")
+                || (localStorage.getItem("theme") === "dark" ? "dark" : "system");
+            const dark = savedMode === "dark"
+                || (savedMode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+            document.documentElement.classList.toggle("sl-theme-dark", dark);
+            document.documentElement.classList.toggle("sl-theme-light", !dark);
+        } catch (e) {}
+    </script>
     <style>
         *, *::before, *::after { box-sizing: border-box; }
 
         body {
-            font-family: Arial, sans-serif;
-            background: #f4f4f4;
+            font-family: var(--sl-font-sans);
+            color: var(--sl-color-neutral-900);
+            background: var(--sl-color-neutral-100);
             margin: 0;
             padding: 16px;
             padding-left: max(16px, env(safe-area-inset-left));
@@ -22,10 +34,11 @@
             max-width: 700px;
             width: 100%;
             margin: 24px auto;
-            background: #fff;
+            background: var(--sl-color-neutral-0);
             padding: 25px 35px;
-            border-radius: 10px;
-            box-shadow: 0 0 12px rgba(0,0,0,0.15);
+            border: 1px solid var(--sl-color-neutral-200);
+            border-radius: var(--sl-border-radius-large);
+            box-shadow: var(--sl-shadow-large);
             overflow-x: hidden;
         }
 
@@ -55,9 +68,35 @@
             margin-top: 30px;
         }
 
+        .app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
+        .app-header h1 {
+            margin: 0;
+        }
+
+        .theme-switch {
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+
+        .theme-switch select {
+            margin: 0 0 0 0.35rem;
+            padding: 0.4rem 0.55rem;
+            color: var(--sl-color-neutral-900);
+            background: var(--sl-color-neutral-0);
+            border: 1px solid var(--sl-color-neutral-300);
+            border-radius: var(--sl-border-radius-medium);
+            color-scheme: inherit;
+        }
+
         button {
-            background: #0078d7;
-            color: white;
+            background: var(--sl-color-primary-600);
+            color: var(--sl-color-neutral-0);
             padding: 10px 18px;
             border: none;
             border-radius: 6px;
@@ -74,7 +113,7 @@
         }
 
         button:hover:not(:disabled) {
-            background: #005fa3;
+            background: var(--sl-color-primary-700);
         }
 
         button.active {
@@ -85,14 +124,79 @@
             background: #218838;
         }
 
+        .recording-control {
+            display: grid;
+            justify-items: center;
+            gap: 0.75rem;
+        }
+
+        .record-action {
+            display: grid;
+            place-items: center;
+            width: 76px;
+            height: 76px;
+            margin: 0;
+            padding: 0;
+            border: 4px solid #fff;
+            border-radius: 50%;
+            background: #dc2626;
+            box-shadow: 0 2px 6px rgba(127, 29, 29, 0.35);
+            transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
+        }
+
+        .record-action:hover:not(:disabled) {
+            background: #b91c1c;
+            box-shadow: 0 4px 12px rgba(127, 29, 29, 0.4);
+            transform: scale(1.04);
+        }
+
+        .record-action:focus-visible {
+            outline: 3px solid #1d4ed8;
+            outline-offset: 3px;
+        }
+
+        .record-action__icon {
+            display: block;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #fff;
+            transition: border-radius 160ms ease;
+        }
+
+        .record-action.is-recording {
+            background: #991b1b;
+            animation: recording-pulse 1.5s ease-in-out infinite;
+        }
+
+        .record-action.is-recording .record-action__icon {
+            border-radius: 3px;
+        }
+
+        .record-action.is-pending {
+            cursor: progress;
+        }
+
+        .record-action-label {
+            color: #555;
+            font-size: 0.9rem;
+        }
+
+        @keyframes recording-pulse {
+            50% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0.15); }
+        }
+
         select, input[type="text"] {
             padding: 8px;
             font-size: 16px; /* avoids iOS zoom-on-focus */
-            border-radius: 6px;
-            border: 1px solid #ccc;
+            color: var(--sl-color-neutral-900);
+            background: var(--sl-color-neutral-0);
+            border: 1px solid var(--sl-color-neutral-300);
+            border-radius: var(--sl-border-radius-medium);
             margin-right: 10px;
             margin-top: 5px;
             max-width: 100%;
+            color-scheme: inherit;
         }
 
         .info-box {
@@ -118,9 +222,9 @@
         }
 
         .stream-section {
-            background: #f9f9f9;
-            border: 1px solid #ddd;
-            border-radius: 8px;
+            background: var(--sl-color-neutral-50);
+            border: 1px solid var(--sl-color-neutral-200);
+            border-radius: var(--sl-border-radius-medium);
             padding: 20px;
             margin-top: 20px;
             overflow: visible;
@@ -139,9 +243,46 @@
             min-width: 9rem;
         }
 
+        .stream-controls button.active {
+            background: var(--sl-color-success-600);
+        }
+
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1rem;
+        }
+
+        .settings-grid input {
+            grid-column: 1 / -1;
+        }
+
+        .settings-grid label[for="filename"] {
+            grid-column: 1 / -1;
+        }
+
+        .settings-grid select, .settings-grid input, .section > select {
+            width: 100%;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.2rem 0.55rem;
+            color: var(--sl-color-neutral-700);
+            background: var(--sl-color-neutral-100);
+            border-radius: 999px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .status-badge.recording {
+            color: var(--sl-color-danger-700);
+            background: var(--sl-color-danger-100);
+        }
+
         .stream-status {
             font-size: 14px;
-            color: #666;
+            color: var(--sl-color-neutral-600);
             margin-top: 10px;
         }
 
@@ -150,12 +291,12 @@
             width: 12px;
             height: 12px;
             border-radius: 50%;
-            background: #ccc;
+            background: var(--sl-color-neutral-400);
             margin-right: 6px;
         }
 
         .stream-indicator.active {
-            background: #5cb85c;
+            background: var(--sl-color-success-600);
             animation: pulse 1s infinite;
         }
 
@@ -170,6 +311,7 @@
             min-width: 0;
             margin-top: 15px;
             overflow: visible;
+            color-scheme: inherit;
         }
 
         #audioPlayer {
@@ -264,20 +406,25 @@
 
         .hostname {
             word-break: break-word;
+            color: var(--sl-color-neutral-600);
         }
 
         @media (max-width: 640px) {
             body {
-                padding: 12px;
-                padding-left: max(12px, env(safe-area-inset-left));
-                padding-right: max(12px, env(safe-area-inset-right));
-                padding-bottom: max(12px, env(safe-area-inset-bottom));
+                padding: 0;
+                padding-left: env(safe-area-inset-left);
+                padding-right: env(safe-area-inset-right);
+                padding-bottom: env(safe-area-inset-bottom);
             }
 
             .container {
-                margin: 0 auto;
+                max-width: none;
+                min-height: 100dvh;
+                margin: 0;
                 padding: 16px;
-                border-radius: 8px;
+                border: 0;
+                border-radius: 0;
+                box-shadow: none;
             }
 
             h1 { font-size: 1.45rem; }
@@ -292,9 +439,12 @@
                 margin-right: 0;
             }
 
-            select, input[type="text"] {
-                width: 100%;
-                margin-right: 0;
+            .settings-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .settings-grid input {
+                grid-column: auto;
             }
 
             #audioPlayer {
@@ -313,13 +463,23 @@
 <body>
 <div class="container">
 
-    <h1>🎙️ Docker Audio Recorder</h1>
+    <header class="app-header">
+        <h1>Docker Audio Recorder</h1>
+        <label class="theme-switch" for="themeMode">
+            Theme
+            <select id="themeMode">
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+    </header>
     <div class="hostname">Host: {{ hostname }}</div>
 
     <!-- STATUS -->
     <div class="section">
         <h2>Status</h2>
-        <p>Recording: <span id="recordingStatus" class="status">Idle</span></p>
+        <p>Recording: <span id="recordingStatus" class="status-badge">Idle</span></p>
         <div class="vu-section">
             <div class="vu-row">
                 <span class="vu-label">L</span>
@@ -346,12 +506,13 @@
     <div class="section">
         <h2>Capture Card</h2>
 
-        <select id="cardSelect" onchange="setCard()" {% if cards|length <= 1 %}disabled{% endif %}>
+        <label for="cardSelect">Capture device</label>
+        <select id="cardSelect" {% if cards|length <= 1 %}disabled{% endif %}>
             {% if not cards %}
                 <option value="">No capture cards found</option>
             {% endif %}
             {% for c in cards %}
-                <option value="{{ c.card }}" data-device="{{ c.device }}"
+                <option value="{{ c.card }}:{{ c.device }}"
                     {% if c.card == selected_card and c.device == selected_device %}selected{% endif %}>
                     {{ c.name }} (card {{ c.card }}, device {{ c.device }})
                 </option>
@@ -368,12 +529,13 @@
                 <span id="currentSource" class="current-source">{{ input_source }}</span>
             </p>
 
+            <label for="inputSource">Source</label>
             <select id="inputSource">
                 <option value="Line" {% if input_source == "Line" %}selected{% endif %}>Line (Analog)</option>
                 <option value="IEC958 In" {% if input_source == "IEC958 In" %}selected{% endif %}>SPDIF (IEC958)</option>
             </select>
 
-            <button onclick="setInputSource()">Apply</button>
+            <button type="button" onclick="setInputSource()">Apply</button>
 
     </div>
     {% endif %}
@@ -382,41 +544,42 @@
     <div class="section">
         <h2>Recording Settings</h2>
 
-        <label>Filename:</label><br>
-        <input id="filename" type="text" placeholder="Leave empty for auto filename">
+        <div class="settings-grid">
+            <label for="filename">Filename</label>
+            <input id="filename" type="text" placeholder="Leave empty for auto filename">
 
-        <br><br>
+            <label for="samplerate">Sample rate</label>
+            <select id="samplerate">
+                <option value="44100">44.1 kHz</option>
+                <option value="48000" selected>48 kHz</option>
+                <option value="96000">96 kHz</option>
+            </select>
 
-        <label>Sample Rate:</label><br>
-        <select id="samplerate">
-            <option value="44100">44.1 kHz</option>
-            <option value="48000">48 kHz</option>
-            <option value="96000">96 kHz</option>
-        </select>
+            <label for="bitdepth">Bit depth</label>
+            <select id="bitdepth">
+                <option value="16">16-bit</option>
+                <option value="24" selected>24-bit</option>
+            </select>
 
-        <br><br>
-
-        <label>Bit Depth:</label><br>
-        <select id="bitdepth">
-            <option value="16">16-bit</option>
-            <option value="24">24-bit</option>
-        </select>
-
-        <br><br>
-
-        <label>File format:</label><br>
-        <select id="fileFormat">
-            <option value="aiff" selected>AIFF (PCM, metadata-ready)</option>
-            <option value="wav">WAV (PCM)</option>
-        </select>
+            <label for="fileFormat">File format</label>
+            <select id="fileFormat">
+                <option value="aiff" selected>AIFF (PCM, metadata-ready)</option>
+                <option value="wav">WAV (PCM)</option>
+            </select>
+        </div>
     </div>
 
     <!-- RECORDING CONTROLS -->
     <div class="section">
         <h2>Recording</h2>
 
-        <button id="startBtn" onclick="startRecording()">▶ Start Recording</button>
-        <button id="stopBtn" onclick="stopRecording()" disabled>⏹ Stop Recording</button>
+        <div class="recording-control">
+            <button id="recordAction" class="record-action" type="button"
+                    onclick="toggleRecording()" aria-label="Start recording" aria-pressed="false">
+                <span class="record-action__icon" aria-hidden="true"></span>
+            </button>
+            <span id="recordActionLabel" class="record-action-label">Tap to record</span>
+        </div>
         <p id="flashMsg"></p>
 
     </div>
@@ -428,13 +591,13 @@
         <p>Monitor the audio stream in real-time. Switch between quality levels based on your network:</p>
 
         <div class="stream-controls">
-            <button id="qualityHighBtn" class="active" onclick="switchQuality('high')">
+            <button id="qualityHighBtn" class="active" type="button" onclick="switchQuality('high')">
                 Studio (lossless PCM)
             </button>
-            <button id="qualityLowBtn" onclick="switchQuality('low')">
-                Low bandwidth (16-bit PCM)
+            <button id="qualityLowBtn" type="button" onclick="switchQuality('low')">
+                Low bandwidth (AAC, 256 kbps)
             </button>
-            <button id="stopStreamBtn" onclick="stopStream()">
+            <button id="stopStreamBtn" type="button" onclick="stopStream()">
                 Stop Stream
             </button>
         </div>
@@ -449,7 +612,7 @@
         </div>
 
         <div class="stream-controls" style="margin-top: 1rem;">
-            <button id="sinkMonitorBtn" onclick="toggleSinkMonitor()">
+            <button id="sinkMonitorBtn" type="button" onclick="toggleSinkMonitor()">
                 PipeWire sink: Off
             </button>
             <span id="sinkMonitorStatus" class="stream-status">Local low-latency monitor (source resolution)</span>
@@ -466,6 +629,8 @@ let currentStreamUrl = null;
 let streamAbortController = null;
 let sinkMonitorOn = false;
 let pcmPlayer = null; // Web Audio lossless PCM (Safari/iOS cannot play live WAV)
+let recordingActive = false;
+let recordingActionPending = false;
 
 function flash(msg, kind) {
     const el = document.getElementById("flashMsg");
@@ -870,21 +1035,32 @@ document.getElementById("samplerate").addEventListener("change", e => {
 });
 
 let pollStatusInFlight = false;
+function renderRecordingControl(recording, pending = false) {
+    recordingActive = Boolean(recording);
+    const button = document.getElementById("recordAction");
+    const label = document.getElementById("recordActionLabel");
+    const status = document.getElementById("recordingStatus");
+
+    button.disabled = pending;
+    button.classList.toggle("is-recording", recordingActive);
+    button.classList.toggle("is-pending", pending);
+    button.setAttribute("aria-pressed", String(recordingActive));
+    button.setAttribute("aria-label", recordingActive ? "Stop recording" : "Start recording");
+    label.textContent = pending
+        ? (recordingActive ? "Stopping…" : "Starting…")
+        : (recordingActive ? "Recording — tap to stop" : "Tap to record");
+    status.innerText = recordingActive ? "Recording…" : "Idle";
+    status.classList.toggle("recording", recordingActive);
+}
+
 function pollStatus() {
     if (pollStatusInFlight) return;
     pollStatusInFlight = true;
     fetch("/api/status")
         .then(r => r.json())
         .then(data => {
-            document.getElementById("startBtn").disabled = data.recording;
-            document.getElementById("stopBtn").disabled = !data.recording;
-            const el = document.getElementById("recordingStatus");
-            if (data.recording) {
-                el.innerText = "Recording…";
-                el.classList.add("recording");
-            } else {
-                el.innerText = "Idle";
-                el.classList.remove("recording");
+            if (!recordingActionPending) {
+                renderRecordingControl(data.recording);
             }
             if (typeof data.sink_monitor === "boolean") {
                 sinkMonitorOn = data.sink_monitor;
@@ -933,9 +1109,10 @@ function setInputSource() {
 
 function setCard() {
     const sel = document.getElementById("cardSelect");
-    const card = parseInt(sel.value);
+    const [cardText, deviceText] = sel.value.split(":");
+    const card = parseInt(cardText);
     if (isNaN(card)) return;
-    const device = parseInt(sel.selectedOptions[0].dataset.device || "0");
+    const device = parseInt(deviceText || "0");
 
     fetch("/api/select_card", {
         method: "POST",
@@ -950,12 +1127,23 @@ function setCard() {
     });
 }
 
+function toggleRecording() {
+    if (recordingActionPending) return;
+    if (recordingActive) {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+}
+
 function startRecording() {
     const filename = document.getElementById("filename").value.trim();
     const samplerate = document.getElementById("samplerate").value;
     const bitdepth = document.getElementById("bitdepth").value;
     const format = document.getElementById("fileFormat").value;
     const wasStreaming = !!currentStreamUrl;
+    recordingActionPending = true;
+    renderRecordingControl(false, true);
 
     fetch("/api/start", {
         method: "POST",
@@ -972,8 +1160,7 @@ function startRecording() {
         if (data.error || data.status === "error") {
             flash(data.error || data.message || "Recording failed", "error");
         } else {
-            document.getElementById("startBtn").disabled = true;
-            document.getElementById("stopBtn").disabled = false;
+            recordingActive = true;
             if (data.record_only) {
                 stopStream();
             } else if (wasStreaming) {
@@ -982,7 +1169,11 @@ function startRecording() {
             flash("Recording " + data.filename, "ok");
         }
     })
-    .catch(() => flash("Recording failed", "error"));
+    .catch(() => flash("Recording failed", "error"))
+    .finally(() => {
+        recordingActionPending = false;
+        renderRecordingControl(recordingActive);
+    });
 }
 
 function warmupEngine() {
@@ -992,18 +1183,23 @@ function warmupEngine() {
 }
 
 function stopRecording() {
+    recordingActionPending = true;
+    renderRecordingControl(true, true);
     fetch("/api/stop", {method: "POST"})
         .then(r => r.json())
         .then(data => {
-            document.getElementById("startBtn").disabled = false;
-            document.getElementById("stopBtn").disabled = true;
             if (data.status === "error") {
                 flash(data.message || "Stop failed", "error");
             } else {
+                recordingActive = false;
                 flash("Recording saved", "ok");
             }
         })
-        .catch(() => flash("Stop failed", "error"));
+        .catch(() => flash("Stop failed", "error"))
+        .finally(() => {
+            recordingActionPending = false;
+            renderRecordingControl(recordingActive);
+        });
 }
 
 function updateSinkMonitorUi() {
@@ -1102,13 +1298,30 @@ function switchQuality(quality) {
     const samplerate = document.getElementById("samplerate").value;
     const bitdepth = document.getElementById("bitdepth").value;
     const qs = `samplerate=${samplerate}&bitdepth=${bitdepth}&t=${Date.now()}`;
-    const endpoint = quality === "high" ? `/stream.wav?${qs}` : `/stream16.wav?${qs}`;
+    const endpoint = quality === "high" ? `/stream.wav?${qs}` : `/low_stream.aac?${qs}`;
     const player = document.getElementById("audioPlayer");
     const statusText = document.getElementById("streamStatusText");
 
     // Stop current stream if any
     stopStream();
     statusText.textContent = "Stream: Connecting…";
+
+    if (quality === "low") {
+        // Native media playback is required for iOS background audio.
+        currentStreamUrl = endpoint;
+        player.src = endpoint;
+        player.play()
+            .then(() => {
+                updateStreamStatus(true, quality);
+                flash("Low-bandwidth AAC monitor (256 kbps)", "ok");
+            })
+            .catch(e => {
+                console.error("AAC stream play error:", e);
+                flash(e.message || "AAC monitor failed", "error");
+                updateStreamStatus(false, quality);
+            });
+        return;
+    }
 
     // iOS only starts audio from inside the tap handler, so create the context now,
     // before the async warm-up below.
@@ -1154,7 +1367,7 @@ function updateStreamStatus(isActive, quality) {
 
     if (isActive) {
         indicator.classList.add("active");
-        let qualityLabel = quality === "high" ? "PCM lossless" : "PCM 16-bit";
+        let qualityLabel = quality === "high" ? "PCM lossless" : "AAC 256 kbps";
         statusText.textContent = `Stream: LIVE (${qualityLabel})` + (pcmPlayer ? pcmPlayer.statsText : "");
     } else {
         indicator.classList.remove("active");
@@ -1205,7 +1418,40 @@ function startLevelsMeter() {
     };
 }
 
+function getThemeMode() {
+    try {
+        return localStorage.getItem("themeMode")
+            || (localStorage.getItem("theme") === "dark" ? "dark" : "system");
+    } catch (e) {
+        return "system";
+    }
+}
+
+function applyTheme(mode) {
+    const dark = mode === "dark"
+        || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    const root = document.documentElement;
+    root.classList.toggle("sl-theme-dark", dark);
+    root.classList.toggle("sl-theme-light", !dark);
+}
+
+function setThemeMode(mode) {
+    applyTheme(mode);
+    try {
+        localStorage.setItem("themeMode", mode);
+        localStorage.removeItem("theme");
+    } catch (e) {}
+}
+
 window.onload = function() {
+    const themeMode = document.getElementById("themeMode");
+    themeMode.value = getThemeMode();
+    themeMode.addEventListener("change", e => setThemeMode(e.target.value));
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+        if (getThemeMode() === "system") applyTheme("system");
+    });
+    document.getElementById("cardSelect").addEventListener("change", setCard);
+
     fetch("/api/cards")
         .then(r => r.json())
         .then(cards => {

@@ -5,6 +5,7 @@ import math
 import os
 import re
 import struct
+import subprocess
 import threading
 
 from werkzeug.utils import secure_filename
@@ -22,7 +23,7 @@ def clean_recording_filename(filename, file_format):
     """Return a safe, canonical recording filename and its format."""
     filename = filename.strip()
     if not filename:
-        ext = "aiff" if file_format == "aiff" else "wav"
+        ext = "aiff" if file_format == "aiff" else file_format
         return generate_filename(ext), file_format
 
     lower = filename.lower()
@@ -35,8 +36,11 @@ def clean_recording_filename(filename, file_format):
     elif lower.endswith(".wav"):
         filename = filename[:-4]
         file_format = "wav"
+    elif lower.endswith(".flac"):
+        filename = filename[:-5]
+        file_format = "flac"
 
-    ext = "aiff" if file_format == "aiff" else "wav"
+    ext = "aiff" if file_format == "aiff" else file_format
     parts = [secure_filename(part) for part in re.split(r"[\\/]+", filename)]
     parts = [part for part in parts if part]
     if not parts:
@@ -92,7 +96,7 @@ def get_audio_formats(bitdepth):
 
 def normalize_file_format(fmt):
     fmt = (fmt or "aiff").strip().lower().lstrip(".")
-    return "wav" if fmt == "wav" else "aiff"
+    return fmt if fmt in {"aiff", "wav", "flac"} else "aiff"
 
 
 def wav_header(rate, channels, depth, data_bytes=0x7FFFF000):
@@ -231,4 +235,68 @@ class AiffRecorder:
             )
             self._fh.flush()
             self._fh.close()
+            return self.data_bytes
+
+
+class FlacRecorder:
+    """Encode native capture PCM to FLAC through FFmpeg."""
+
+    format_name = "flac"
+
+    def __init__(self, path, rate, channels, depth):
+        self.path = path
+        self.rate = int(rate)
+        self.channels = int(channels)
+        self.depth = int(depth)
+        self.data_bytes = 0
+        self._lock = threading.Lock()
+        pcm_format = {8: "u8", 16: "s16le", 24: "s24le", 32: "s32le"}.get(self.depth)
+        if pcm_format is None:
+            raise ValueError(f"Unsupported bit depth: {self.depth}")
+        self._proc = subprocess.Popen(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                pcm_format,
+                "-ar",
+                str(self.rate),
+                "-ac",
+                str(self.channels),
+                "-i",
+                "pipe:0",
+                "-c:a",
+                "flac",
+                "-y",
+                path,
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+        )
+
+    def write(self, pcm):
+        if not pcm:
+            return
+        with self._lock:
+            if self._proc.poll() is not None:
+                raise RuntimeError("FLAC encoder stopped unexpectedly")
+            self._proc.stdin.write(pcm)
+            self.data_bytes += len(pcm)
+
+    def close(self):
+        with self._lock:
+            if self._proc.stdin and not self._proc.stdin.closed:
+                self._proc.stdin.close()
+            return_code = self._proc.wait(timeout=30)
+            error = ""
+            if self._proc.stderr:
+                if return_code:
+                    error = self._proc.stderr.read().decode("utf-8", errors="replace").strip()
+                self._proc.stderr.close()
+            if return_code:
+                raise RuntimeError(f"FLAC encoder failed: {error or return_code}")
             return self.data_bytes

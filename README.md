@@ -61,6 +61,10 @@ sidecar next to each recording (`<recording>.aiff.json` or
 `<recording>.wav.json`). Sidecars move with renamed recordings and are removed
 when recordings are deleted.
 
+AIFF and WAV are written as PCM directly from the shared capture router. FLAC
+is also available as a lossless compressed option and is encoded by FFmpeg from
+that same PCM stream.
+
 ### Playback policy
 
 Only one Library recording can play at a time. Starting a Library playback
@@ -155,6 +159,7 @@ Recordings are saved to `./recordings/` on the host machine. This directory is m
 
 - [x] Browse, play, download, and delete completed recordings in the **Library** view
 - [x] Basic metadata support (title, artist, album, year)
+- [x] FLAC recording (lossless compressed)
 - [ ] Discogs integration: look up a release and read metadata (artist, title, label, year, track list) to tag files and suggest folder/file names, similar to Kid3's Discogs import
 - [ ] Phase scope display (stereo correlation / goniometer) in the live monitor
 - [ ] Click and pop identification, with markers placed at detected clicks

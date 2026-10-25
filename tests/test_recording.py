@@ -14,8 +14,10 @@ from audio_recorder.hardware import (
 )
 from audio_recorder.recording import (
     AiffRecorder,
+    FlacRecorder,
     WavRecorder,
     clean_recording_filename,
+    normalize_file_format,
     resolve_recording_path,
 )
 
@@ -75,6 +77,22 @@ class PcmRecorderTests(unittest.TestCase):
 
             self.assertEqual(recorder.close(), 2)
             self.assertEqual(path.read_bytes()[-2:], b"\x12\x34")
+
+    def test_flac_recorder_encodes_capture_pcm(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, "recording.flac")
+            recorder = FlacRecorder(path, 48000, 1, 16)
+            recorder.write(b"\x00\x00" * 480)
+
+            self.assertEqual(recorder.close(), 960)
+            self.assertEqual(path.read_bytes()[:4], b"fLaC")
+
+    def test_flac_filename_and_format_are_normalized(self):
+        filename, file_format = clean_recording_filename("album/track.flac", "aiff")
+
+        self.assertEqual(filename, "album/track.flac")
+        self.assertEqual(file_format, "flac")
+        self.assertEqual(normalize_file_format("FLAC"), "flac")
 
 
 class HardwareParsingTests(unittest.TestCase):

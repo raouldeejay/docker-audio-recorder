@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 from flask import Flask, render_template, request, jsonify, Response, send_file
 from audio_recorder.recording import (
     AiffRecorder,
+    FlacRecorder,
     WavRecorder,
     clean_recording_filename,
     get_audio_formats,
@@ -658,6 +659,7 @@ RECORDING_MEDIA_TYPES = {
     ".aif": "audio/aiff",
     ".aiff": "audio/aiff",
     ".wav": "audio/wav",
+    ".flac": "audio/flac",
 }
 RECORDING_METADATA_FIELDS = ("title", "artist", "album", "year")
 
@@ -828,7 +830,7 @@ def start_recording(filename, file_format="aiff"):
 
     file_format = _normalize_file_format(file_format)
 
-    # Direct arecord -t wav only supports WAV; AIFF always uses the shared path.
+    # Direct arecord -t wav only supports WAV; AIFF and FLAC use the shared path.
     if RECORD_ONLY_MODE and file_format == "wav":
         return _start_direct_arecord_wav(filename)
 
@@ -844,6 +846,8 @@ def start_recording(filename, file_format="aiff"):
     try:
         if file_format == "aiff":
             wav_recorder = AiffRecorder(filepath, samplerate, channels, bitdepth)
+        elif file_format == "flac":
+            wav_recorder = FlacRecorder(filepath, samplerate, channels, bitdepth)
         else:
             wav_recorder = WavRecorder(filepath, samplerate, channels, bitdepth)
     except Exception as e:
@@ -862,7 +866,7 @@ def start_recording(filename, file_format="aiff"):
 
     is_recording = True
     alsa_fmt, _ = get_audio_formats(bitdepth)
-    label = "AIFF" if file_format == "aiff" else "WAV"
+    label = file_format.upper()
     _log(
         f"{label} recorder started ({alsa_fmt}, {samplerate}Hz, {channels}ch, {bitdepth}-bit) → {filepath}"
     )

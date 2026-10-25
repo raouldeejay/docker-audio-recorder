@@ -220,11 +220,25 @@
 
 .explorer-menu-actions a,
 .explorer-menu-actions button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   margin: 0;
   padding: 0.55rem 0.7rem;
   color: var(--sl-color-neutral-800);
   background: transparent;
   text-align: left;
+}
+
+.explorer-menu-actions svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .explorer-menu-actions .explorer-delete {

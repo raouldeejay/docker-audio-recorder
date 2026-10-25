@@ -3,6 +3,8 @@ const status = document.getElementById("libraryStatus");
 const breadcrumb = document.getElementById("libraryBreadcrumb");
 const refreshButton = document.getElementById("refreshLibrary");
 const player = new Audio();
+const PLAY_ICON = ["M8 5v14l11-7z"];
+const STOP_ICON = ["M7 7h10v10H7z"];
 
 let recordings = [];
 let currentFolder = "";
@@ -55,6 +57,17 @@ function createIconButton(label, className, paths, onClick) {
   button.append(createIcon(paths));
   button.addEventListener("click", onClick);
   return button;
+}
+
+function setButtonIcon(button, paths) {
+  const icon = button.querySelector("svg");
+  if (!icon) return;
+  icon.replaceChildren();
+  paths.forEach(d => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    icon.append(path);
+  });
 }
 
 function relativeEntries() {
@@ -123,6 +136,7 @@ function setPlaybackButton(button, active) {
   button.classList.toggle("is-playing", active);
   button.setAttribute("aria-label", active ? "Stop playback" : "Play recording");
   button.title = active ? "Stop playback" : "Play recording";
+  setButtonIcon(button, active ? STOP_ICON : PLAY_ICON);
 }
 
 function startPlayback() {
@@ -146,6 +160,7 @@ function finishPlayback() {
 
 function stopPlayback() {
   if (!activePlayer) return;
+  setPlaybackButton(activePlayButton, false);
   player.pause();
   player.currentTime = 0;
 }
@@ -225,10 +240,16 @@ function createFileMenu(recording) {
   actions.className = "explorer-menu-actions";
   const download = document.createElement("a");
   download.href = fileUrl(recording.path, true);
-  download.textContent = "Download";
+  download.append(
+    createIcon(["M12 3v12m0 0 4-4m-4 4-4-4", "M4 17v3h16v-3"]),
+    document.createTextNode("Download"),
+  );
   const rename = document.createElement("button");
   rename.type = "button";
-  rename.textContent = "Rename";
+  rename.append(
+    createIcon(["M4 20h4l10.5-10.5-4-4L4 16v4", "m12.5 6.5 4 4"]),
+    document.createTextNode("Rename"),
+  );
   rename.addEventListener("click", async () => {
     try {
       await renameRecording(recording);
@@ -239,7 +260,10 @@ function createFileMenu(recording) {
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "explorer-delete";
-  remove.textContent = "Delete";
+  remove.append(
+    createIcon(["M4 7h16M10 11v6m4-6v6M9 7l1-3h4l1 3M6 7l1 14h10l1-14"]),
+    document.createTextNode("Delete"),
+  );
   remove.addEventListener("click", async () => {
     try {
       await deleteRecording(recording);
@@ -255,7 +279,7 @@ function createFileMenu(recording) {
 function createFileEntry(recording) {
   const entry = document.createElement("li");
   entry.className = "explorer-entry explorer-file";
-  const play = createIconButton("Play recording", "explorer-play", ["M8 5v14l11-7z"], () => {
+  const play = createIconButton("Play recording", "explorer-play", PLAY_ICON, () => {
     togglePlayback(recording, play);
   });
   if (activeRecordingPath === recording.path && !player.paused) {

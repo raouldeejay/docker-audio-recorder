@@ -469,13 +469,23 @@
     <header class="app-header">
         <div class="app-brand" title="Docker Audio Recorder">
             <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" fill="#171717" stroke="#a1a1aa" stroke-width="1"></circle>
-                <circle cx="12" cy="12" r="3" fill="#f8fafc" stroke="none"></circle>
-                <circle cx="12" cy="12" r="0.65" fill="#171717" stroke="none"></circle>
-            </svg>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="9.5" fill="#dc2626" stroke="none"></circle>
-                <circle cx="12" cy="12" r="3" fill="#f8fafc" stroke="none"></circle>
+                <defs>
+                    <clipPath id="app-icon-left">
+                        <rect x="0" y="0" width="12" height="24"></rect>
+                    </clipPath>
+                    <clipPath id="app-icon-right">
+                        <rect x="12" y="0" width="12" height="24"></rect>
+                    </clipPath>
+                </defs>
+                <g clip-path="url(#app-icon-left)">
+                    <circle cx="12" cy="12" r="9" fill="#171717" stroke="#a1a1aa" stroke-width="1"></circle>
+                    <circle cx="12" cy="12" r="3" fill="#f8fafc" stroke="none"></circle>
+                    <circle cx="12" cy="12" r="0.65" fill="#171717" stroke="none"></circle>
+                </g>
+                <g clip-path="url(#app-icon-right)">
+                    <circle cx="12" cy="12" r="9.5" fill="#dc2626" stroke="none"></circle>
+                    <circle cx="12" cy="12" r="3" fill="#f8fafc" stroke="none"></circle>
+                </g>
             </svg>
             <span class="sr-only">Docker Audio Recorder</span>
         </div>

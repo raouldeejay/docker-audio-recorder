@@ -50,6 +50,10 @@
   min-width: 0;
 }
 
+.app-view[hidden] {
+  display: none !important;
+}
+
 .library-view {
   display: flex;
   flex-direction: column;

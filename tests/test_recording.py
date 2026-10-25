@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
@@ -218,6 +219,47 @@ class RecordingLibraryApiTests(unittest.TestCase):
 
         self.assertEqual(active.status_code, 409)
         self.assertTrue(recording.exists())
+
+    def test_lists_renames_and_deletes_metadata_sidecars(self):
+        recording = Path(self.root.name, "track.aiff")
+        recording.write_bytes(b"FORM")
+        sidecar = recorder_app._recording_metadata_path(recording)
+        sidecar.write_text(json.dumps({"title": "A Title", "artist": "An Artist"}))
+
+        listing = self.client.get("/api/recordings")
+
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(
+            listing.json["recordings"][0]["metadata"],
+            {"title": "A Title", "artist": "An Artist"},
+        )
+
+        renamed = self.client.patch(
+            "/api/recordings",
+            json={"path": "track.aiff", "filename": "renamed.aiff"},
+        )
+        renamed_path = Path(self.root.name, "renamed.aiff")
+
+        self.assertEqual(renamed.status_code, 200)
+        self.assertFalse(sidecar.exists())
+        self.assertTrue(recorder_app._recording_metadata_path(renamed_path).exists())
+
+        deleted = self.client.delete("/api/recordings", json={"path": "renamed.aiff"})
+
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse(recorder_app._recording_metadata_path(renamed_path).exists())
+
+    def test_rejects_invalid_recording_metadata(self):
+        self.assertEqual(
+            recorder_app._normalize_recording_metadata(
+                {"title": "  Test  ", "year": "2025", "album": ""}
+            ),
+            {"title": "Test", "year": "2025"},
+        )
+        with self.assertRaisesRegex(ValueError, "four-digit year"):
+            recorder_app._normalize_recording_metadata({"year": "25"})
+        with self.assertRaisesRegex(ValueError, "must be an object"):
+            recorder_app._normalize_recording_metadata("title")
 
 
 if __name__ == "__main__":

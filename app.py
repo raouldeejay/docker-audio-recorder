@@ -659,6 +659,7 @@ RECORDING_MEDIA_TYPES = {
     ".aiff": "audio/aiff",
     ".wav": "audio/wav",
 }
+RECORDING_METADATA_FIELDS = ("title", "artist", "album", "year")
 
 
 def _recordings_root_path():
@@ -700,6 +701,57 @@ def _active_recording_path():
     elif direct_record_path is not None:
         path = direct_record_path
     return Path(path).resolve() if path else None
+
+
+def _recording_metadata_path(recording):
+    return recording.with_name(f"{recording.name}.json")
+
+
+def _normalize_recording_metadata(metadata):
+    """Validate and normalize optional user-supplied recording metadata."""
+    if metadata is None:
+        return {}
+    if not isinstance(metadata, dict):
+        raise ValueError("Metadata must be an object")
+
+    normalized = {}
+    for field in RECORDING_METADATA_FIELDS:
+        value = metadata.get(field, "")
+        if value is None:
+            value = ""
+        if not isinstance(value, str):
+            raise ValueError(f"Metadata {field} must be a string")
+        value = value.strip()
+        if len(value) > 200:
+            raise ValueError(f"Metadata {field} is too long (maximum 200 characters)")
+        if field == "year" and value and (len(value) != 4 or not value.isdigit()):
+            raise ValueError("Metadata year must be a four-digit year")
+        if value:
+            normalized[field] = value
+    return normalized
+
+
+def _read_recording_metadata(recording):
+    sidecar = _recording_metadata_path(recording)
+    if not sidecar.is_file() or sidecar.is_symlink():
+        return {}
+    try:
+        return _normalize_recording_metadata(json.loads(sidecar.read_text(encoding="utf-8")))
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        _log(f"Ignoring invalid metadata sidecar {sidecar}: {e}")
+        return {}
+
+
+def _write_recording_metadata(recording, metadata):
+    sidecar = _recording_metadata_path(recording)
+    if not metadata:
+        return
+    temporary = sidecar.with_name(f".{sidecar.name}.tmp")
+    temporary.write_text(
+        json.dumps(metadata, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(sidecar)
 
 
 def _renamed_recording_path(recording, filename):
@@ -746,6 +798,7 @@ def list_recordings():
                     stat.st_mtime, tz=datetime.timezone.utc
                 ).isoformat(),
                 "media_type": RECORDING_MEDIA_TYPES[resolved.suffix.lower()],
+                "metadata": _read_recording_metadata(resolved),
             }
         )
     return sorted(recordings, key=lambda recording: recording["modified_at"], reverse=True)
@@ -1446,6 +1499,7 @@ def api_delete_recording():
 
     try:
         recording.unlink()
+        _recording_metadata_path(recording).unlink(missing_ok=True)
     except OSError as e:
         _log(f"Failed to delete recording {recording}: {e}")
         return jsonify({"error": "Failed to delete recording"}), 500
@@ -1473,6 +1527,9 @@ def api_rename_recording():
 
     try:
         recording.rename(target)
+        source_metadata = _recording_metadata_path(recording)
+        if source_metadata.exists():
+            source_metadata.rename(_recording_metadata_path(target))
     except OSError as e:
         _log(f"Failed to rename recording {recording}: {e}")
         return jsonify({"error": "Failed to rename recording"}), 500
@@ -1500,6 +1557,10 @@ def _api_start():
         return jsonify({"error": "No capture card found"}), 400
 
     file_format = _normalize_file_format(payload.get("format", "aiff"))
+    try:
+        metadata = _normalize_recording_metadata(payload.get("metadata"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     requested_filename = payload.get("filename", "")
     if requested_filename is None:
@@ -1533,7 +1594,16 @@ def _api_start():
             stop_continuous_audio_engine()
             init_continuous_audio_engine(samplerate, bitdepth)
 
+    recording_path = _recordings_root_path() / filename
+    try:
+        _write_recording_metadata(recording_path, metadata)
+    except OSError as e:
+        _log(f"Failed to save recording metadata: {e}")
+        return jsonify({"error": "Failed to save recording metadata"}), 500
+
     result = start_recording(filename, file_format=file_format)
+    if result["status"] != "success":
+        _recording_metadata_path(recording_path).unlink(missing_ok=True)
     status = "recording" if result["status"] == "success" else "error"
     code = 200 if status == "recording" else 500
     return jsonify({"status": status, "filename": filename, **result}), code

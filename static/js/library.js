@@ -288,7 +288,7 @@ function createFileEntry(recording) {
   }
   const name = document.createElement("span");
   name.className = "explorer-name";
-  name.textContent = recording.path.split("/").pop();
+  name.textContent = recording.metadata?.title || recording.path.split("/").pop();
   name.title = recording.path;
   const size = document.createElement("span");
   size.className = "explorer-size";

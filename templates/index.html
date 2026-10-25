@@ -549,6 +549,15 @@
         <div class="recording-setup">
             <label for="filename">Filename</label>
             <input id="filename" type="text" placeholder="Leave empty for auto filename">
+            <details class="recording-metadata">
+                <summary>Recording metadata</summary>
+                <div class="recording-metadata__fields">
+                    <input id="metadataTitle" type="text" placeholder="Title">
+                    <input id="metadataArtist" type="text" placeholder="Artist">
+                    <input id="metadataAlbum" type="text" placeholder="Album">
+                    <input id="metadataYear" type="text" inputmode="numeric" maxlength="4" placeholder="Year">
+                </div>
+            </details>
             <p id="recordingSetupSummary" class="settings-summary">Loading recording setup…</p>
         </div>
     </div>
@@ -1201,6 +1210,12 @@ function startRecording() {
     const samplerate = document.getElementById("samplerate").value;
     const bitdepth = document.getElementById("bitdepth").value;
     const format = document.getElementById("fileFormat").value;
+    const metadata = {
+        title: document.getElementById("metadataTitle").value.trim(),
+        artist: document.getElementById("metadataArtist").value.trim(),
+        album: document.getElementById("metadataAlbum").value.trim(),
+        year: document.getElementById("metadataYear").value.trim(),
+    };
     const wasStreaming = !!currentStreamUrl;
     recordingActionPending = true;
     renderRecordingControl(false, true);
@@ -1212,7 +1227,8 @@ function startRecording() {
             filename,
             samplerate,
             bitdepth,
-            format
+            format,
+            metadata
         })
     })
     .then(r => r.json())

@@ -56,6 +56,11 @@ The title shows the Docker host machine name (for example, `rpi4` or `rpi5`)
 from the read-only `/etc/hostname` mount. Set `HOST_MACHINE_NAME` to override
 it when that mount is unavailable.
 
+Optional title, artist, album, and year fields are stored in a validated JSON
+sidecar next to each recording (`<recording>.aiff.json` or
+`<recording>.wav.json`). Sidecars move with renamed recordings and are removed
+when recordings are deleted.
+
 ### Playback policy
 
 Only one Library recording can play at a time. Starting a Library playback
@@ -149,7 +154,7 @@ Recordings are saved to `./recordings/` on the host machine. This directory is m
 ## Feature roadmap
 
 - [x] Browse, play, download, and delete completed recordings in the **Library** view
-- [ ] Metadata support (title, artist, description)
+- [x] Basic metadata support (title, artist, album, year)
 - [ ] Discogs integration: look up a release and read metadata (artist, title, label, year, track list) to tag files and suggest folder/file names, similar to Kid3's Discogs import
 - [ ] Phase scope display (stereo correlation / goniometer) in the live monitor
 - [ ] Click and pop identification, with markers placed at detected clicks

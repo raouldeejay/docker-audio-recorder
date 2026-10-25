@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 24 24" role="img" aria-label="Docker Audio Recorder icon">
+  <defs>
+    <clipPath id="left">
+      <rect x="0" y="0" width="12" height="24"/>
+    </clipPath>
+    <clipPath id="right">
+      <rect x="12" y="0" width="12" height="24"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#left)">
+    <circle cx="12" cy="12" r="9.125" fill="#171717" stroke="#a1a1aa" stroke-width=".75"/>
+    <circle cx="12" cy="12" r="3" fill="#f8fafc"/>
+    <circle cx="12" cy="12" r=".65" fill="#171717"/>
+  </g>
+  <g clip-path="url(#right)">
+    <circle cx="12" cy="12" r="9.5" fill="#dc2626"/>
+    <circle cx="12" cy="12" r="3" fill="#f8fafc"/>
+  </g>
+</svg>

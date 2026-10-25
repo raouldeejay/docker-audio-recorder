@@ -53,7 +53,7 @@
 .library-view {
   display: flex;
   flex-direction: column;
-  height: min(34rem, calc(100dvh - 13rem));
+  height: calc(100dvh - 14rem);
   margin-top: 1.5rem;
   min-height: 12rem;
 }
@@ -97,7 +97,7 @@
 }
 
 .library-view {
-  height: calc(100dvh - 15rem - env(safe-area-inset-bottom));
+  height: calc(100dvh - 12.25rem - env(safe-area-inset-bottom));
 }
 
 .recording-details {

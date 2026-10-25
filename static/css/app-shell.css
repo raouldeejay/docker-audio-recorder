@@ -101,7 +101,7 @@
 }
 
 .library-view {
-  height: calc(100dvh - 12.25rem - env(safe-area-inset-bottom));
+  height: calc(100dvh - 8.5rem - env(safe-area-inset-bottom));
 }
 
 .recording-details {

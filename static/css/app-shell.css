@@ -51,7 +51,11 @@
 }
 
 .library-view {
+  display: flex;
+  flex-direction: column;
+  height: min(34rem, calc(100dvh - 13rem));
   margin-top: 1.5rem;
+  min-height: 12rem;
 }
 
 .library-toolbar,
@@ -72,9 +76,13 @@
 }
 
 .recording-list {
+  flex: 1 1 auto;
   display: grid;
   gap: 0.75rem;
   margin: 1rem 0 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0;
   background: transparent;
   border: 0;
@@ -86,6 +94,10 @@
   background: var(--sl-color-neutral-50);
   border: 1px solid var(--sl-color-neutral-200);
   border-radius: var(--sl-border-radius-medium);
+}
+
+.library-view {
+  height: calc(100dvh - 15rem - env(safe-area-inset-bottom));
 }
 
 .recording-details {

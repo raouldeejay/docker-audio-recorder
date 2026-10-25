@@ -613,7 +613,6 @@
     </section>
 
     <section class="app-view library-view" data-view="library" hidden>
-        <h2>Library</h2>
         <div class="library-toolbar">
             <p id="libraryStatus" class="library-status" role="status" aria-live="polite">Loading recordings…</p>
             <button id="refreshLibrary" type="button">Refresh</button>
@@ -1218,6 +1217,7 @@ function stopRecording() {
             } else {
                 recordingActive = false;
                 flash("Recording saved", "ok");
+                window.reloadLibrary?.();
             }
         })
         .catch(() => flash("Stop failed", "error"))

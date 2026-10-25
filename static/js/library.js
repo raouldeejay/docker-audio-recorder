@@ -205,5 +205,6 @@ async function loadRecordings() {
 
 export function initLibrary() {
   refreshButton.addEventListener("click", loadRecordings);
+  window.reloadLibrary = loadRecordings;
   loadRecordings();
 }

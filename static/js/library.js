@@ -1,7 +1,14 @@
 const list = document.getElementById("recordingList");
 const status = document.getElementById("libraryStatus");
+const breadcrumb = document.getElementById("libraryBreadcrumb");
 const refreshButton = document.getElementById("refreshLibrary");
+const player = new Audio();
+
+let recordings = [];
+let currentFolder = "";
 let activePlayer = null;
+let activeRecordingPath = null;
+let activePlayButton = null;
 let suspendedMonitor = null;
 
 function fileUrl(path, download = false) {
@@ -20,11 +27,6 @@ function formatSize(size) {
     unit++;
   } while (value >= 1024 && unit < units.length - 1);
   return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
-
-function formatModified(value) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "Unknown date" : date.toLocaleString();
 }
 
 function setStatus(message, error = false) {
@@ -55,20 +57,58 @@ function createIconButton(label, className, paths, onClick) {
   return button;
 }
 
-async function deleteRecording(recording, entry) {
-  if (!window.confirm(`Delete "${recording.path}"? This cannot be undone.`)) return;
+function relativeEntries() {
+  const prefix = currentFolder ? `${currentFolder}/` : "";
+  const folders = new Map();
+  const files = [];
 
-  const response = await fetch("/api/recordings", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: recording.path }),
+  recordings.forEach(recording => {
+    if (!recording.path.startsWith(prefix)) return;
+    const remainder = recording.path.slice(prefix.length);
+    const [segment, ...children] = remainder.split("/");
+    if (children.length) {
+      const folder = folders.get(segment) || { name: segment, path: `${prefix}${segment}`, count: 0 };
+      folder.count++;
+      folders.set(segment, folder);
+    } else {
+      files.push(recording);
+    }
   });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "Failed to delete recording");
 
-  entry.remove();
-  const remaining = list.children.length;
-  setStatus(remaining ? `${remaining} recording${remaining === 1 ? "" : "s"}` : "No recordings yet.");
+  return {
+    folders: [...folders.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    files: files.sort((a, b) => a.path.localeCompare(b.path)),
+  };
+}
+
+function openFolder(path) {
+  currentFolder = path;
+  renderExplorer();
+}
+
+function renderBreadcrumb() {
+  breadcrumb.replaceChildren();
+  const parts = currentFolder ? currentFolder.split("/") : [];
+  const trail = [{ label: "Library", path: "" }];
+  parts.forEach((part, index) => {
+    trail.push({ label: part, path: parts.slice(0, index + 1).join("/") });
+  });
+
+  trail.forEach((item, index) => {
+    if (index) {
+      const separator = document.createElement("span");
+      separator.textContent = "/";
+      separator.setAttribute("aria-hidden", "true");
+      breadcrumb.append(separator);
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = item.label;
+    button.className = item.path === currentFolder ? "is-current" : "";
+    button.disabled = item.path === currentFolder;
+    button.addEventListener("click", () => openFolder(item.path));
+    breadcrumb.append(button);
+  });
 }
 
 function restoreMonitorIfIdle() {
@@ -78,32 +118,72 @@ function restoreMonitorIfIdle() {
   window.resumeMonitorAfterLibraryPlayback?.(monitor);
 }
 
-function stopActivePlayer(except = null) {
-  if (!activePlayer || activePlayer === except) return;
-  activePlayer.pause();
-  activePlayer.currentTime = 0;
+function setPlaybackButton(button, active) {
+  if (!button) return;
+  button.classList.toggle("is-playing", active);
+  button.setAttribute("aria-label", active ? "Stop playback" : "Play recording");
+  button.title = active ? "Stop playback" : "Play recording";
 }
 
-function startPlayback(player) {
-  stopActivePlayer(player);
+function startPlayback() {
   activePlayer = player;
   if (!suspendedMonitor) {
     suspendedMonitor = window.suspendMonitorForLibraryPlayback?.() || null;
   }
+  setPlaybackButton(activePlayButton, true);
 }
 
-function finishPlayback(player) {
+function finishPlayback() {
   queueMicrotask(() => {
-    if (activePlayer !== player || !player.paused) return;
+    if (!player.paused) return;
+    setPlaybackButton(activePlayButton, false);
     activePlayer = null;
+    activeRecordingPath = null;
+    activePlayButton = null;
     restoreMonitorIfIdle();
   });
+}
+
+function stopPlayback() {
+  if (!activePlayer) return;
+  player.pause();
+  player.currentTime = 0;
+}
+
+function togglePlayback(recording, button) {
+  if (activeRecordingPath === recording.path && !player.paused) {
+    stopPlayback();
+    return;
+  }
+  setPlaybackButton(activePlayButton, false);
+  activeRecordingPath = recording.path;
+  activePlayButton = button;
+  player.src = fileUrl(recording.path);
+  player.play().catch(error => {
+    setStatus(error.message || "Playback failed", true);
+    finishPlayback();
+  });
+}
+
+async function deleteRecording(recording) {
+  if (!window.confirm(`Delete "${recording.path}"? This cannot be undone.`)) return;
+  if (activeRecordingPath === recording.path) stopPlayback();
+
+  const response = await fetch("/api/recordings", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: recording.path }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Failed to delete recording");
+  await loadRecordings();
 }
 
 async function renameRecording(recording) {
   const currentName = recording.path.split("/").pop();
   const filename = window.prompt("Rename recording", currentName);
   if (filename === null) return;
+  if (activeRecordingPath === recording.path) stopPlayback();
 
   const response = await fetch("/api/recordings", {
     method: "PATCH",
@@ -115,76 +195,96 @@ async function renameRecording(recording) {
   await loadRecordings();
 }
 
-function renderRecordings(recordings) {
+function createFolderEntry(folder) {
+  const entry = document.createElement("li");
+  entry.className = "explorer-entry explorer-folder";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "explorer-open";
+  button.append(createIcon(["M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"]));
+  const name = document.createElement("span");
+  name.textContent = folder.name;
+  button.append(name);
+  button.addEventListener("click", () => openFolder(folder.path));
+  const count = document.createElement("span");
+  count.className = "explorer-count";
+  count.textContent = `${folder.count} item${folder.count === 1 ? "" : "s"}`;
+  entry.append(button, count);
+  return entry;
+}
+
+function createFileMenu(recording) {
+  const menu = document.createElement("details");
+  menu.className = "explorer-menu";
+  const summary = document.createElement("summary");
+  summary.setAttribute("aria-label", `Actions for ${recording.path}`);
+  summary.title = `Actions for ${recording.path}`;
+  summary.textContent = "•••";
+
+  const actions = document.createElement("div");
+  actions.className = "explorer-menu-actions";
+  const download = document.createElement("a");
+  download.href = fileUrl(recording.path, true);
+  download.textContent = "Download";
+  const rename = document.createElement("button");
+  rename.type = "button";
+  rename.textContent = "Rename";
+  rename.addEventListener("click", async () => {
+    try {
+      await renameRecording(recording);
+    } catch (error) {
+      setStatus(error.message || "Failed to rename recording", true);
+    }
+  });
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "explorer-delete";
+  remove.textContent = "Delete";
+  remove.addEventListener("click", async () => {
+    try {
+      await deleteRecording(recording);
+    } catch (error) {
+      setStatus(error.message || "Failed to delete recording", true);
+    }
+  });
+  actions.append(download, rename, remove);
+  menu.append(summary, actions);
+  return menu;
+}
+
+function createFileEntry(recording) {
+  const entry = document.createElement("li");
+  entry.className = "explorer-entry explorer-file";
+  const play = createIconButton("Play recording", "explorer-play", ["M8 5v14l11-7z"], () => {
+    togglePlayback(recording, play);
+  });
+  if (activeRecordingPath === recording.path && !player.paused) {
+    setPlaybackButton(play, true);
+    activePlayButton = play;
+  }
+  const name = document.createElement("span");
+  name.className = "explorer-name";
+  name.textContent = recording.path.split("/").pop();
+  name.title = recording.path;
+  const size = document.createElement("span");
+  size.className = "explorer-size";
+  size.textContent = formatSize(recording.size_bytes);
+  entry.append(play, name, size, createFileMenu(recording));
+  return entry;
+}
+
+function renderExplorer() {
+  renderBreadcrumb();
   list.replaceChildren();
-  if (!recordings.length) {
-    setStatus("No recordings yet.");
+  const { folders, files } = relativeEntries();
+  const count = folders.length + files.length;
+  if (!count) {
+    setStatus(currentFolder ? "This folder is empty." : "No recordings yet.");
     return;
   }
-
-  setStatus(`${recordings.length} recording${recordings.length === 1 ? "" : "s"}`);
-  recordings.forEach(recording => {
-    const entry = document.createElement("li");
-    entry.className = "recording-entry";
-
-    const details = document.createElement("div");
-    details.className = "recording-details";
-    const name = document.createElement("span");
-    name.className = "recording-name";
-    name.textContent = recording.path;
-    name.title = recording.path;
-    const meta = document.createElement("span");
-    meta.className = "recording-meta";
-    meta.textContent = `${formatSize(recording.size_bytes)} · ${formatModified(recording.modified_at)}`;
-    details.append(name, meta);
-
-    const actions = document.createElement("div");
-    actions.className = "recording-actions";
-    const play = document.createElement("audio");
-    play.controls = true;
-    play.preload = "none";
-    play.src = fileUrl(recording.path);
-    play.setAttribute("aria-label", `Play ${recording.path}`);
-    play.addEventListener("play", () => startPlayback(play));
-    play.addEventListener("pause", () => finishPlayback(play));
-    const download = document.createElement("a");
-    download.href = fileUrl(recording.path, true);
-    download.className = "library-download";
-    download.setAttribute("aria-label", `Download ${recording.path}`);
-    download.title = `Download ${recording.path}`;
-    download.append(createIcon([
-      "M12 3v12m0 0 4-4m-4 4-4-4",
-      "M4 17v3h16v-3",
-    ]));
-    const rename = createIconButton("Rename " + recording.path, "recording-rename", [
-      "M4 20h4l10.5-10.5-4-4L4 16v4",
-      "m12.5 6.5 4 4",
-    ], async () => {
-      rename.disabled = true;
-      try {
-        await renameRecording(recording);
-      } catch (error) {
-        setStatus(error.message || "Failed to rename recording", true);
-      } finally {
-        rename.disabled = false;
-      }
-    });
-    const remove = createIconButton("Delete " + recording.path, "recording-delete", [
-      "M4 7h16M10 11v6m4-6v6M9 7l1-3h4l1 3M6 7l1 14h10l1-14",
-    ], async () => {
-      remove.disabled = true;
-      try {
-        await deleteRecording(recording, entry);
-      } catch (error) {
-        setStatus(error.message || "Failed to delete recording", true);
-        remove.disabled = false;
-      }
-    });
-    actions.append(play, download, rename, remove);
-
-    entry.append(details, actions);
-    list.append(entry);
-  });
+  setStatus(`${folders.length} folder${folders.length === 1 ? "" : "s"} · ${files.length} file${files.length === 1 ? "" : "s"}`);
+  folders.forEach(folder => list.append(createFolderEntry(folder)));
+  files.forEach(recording => list.append(createFileEntry(recording)));
 }
 
 async function loadRecordings() {
@@ -194,7 +294,11 @@ async function loadRecordings() {
     const response = await fetch("/api/recordings", { cache: "no-store" });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Failed to load recordings");
-    renderRecordings(payload.recordings);
+    recordings = payload.recordings;
+    if (currentFolder && !recordings.some(recording => recording.path.startsWith(`${currentFolder}/`))) {
+      currentFolder = "";
+    }
+    renderExplorer();
   } catch (error) {
     list.replaceChildren();
     setStatus(error.message || "Failed to load recordings", true);
@@ -204,6 +308,9 @@ async function loadRecordings() {
 }
 
 export function initLibrary() {
+  player.preload = "metadata";
+  player.addEventListener("play", startPlayback);
+  player.addEventListener("pause", finishPlayback);
   refreshButton.addEventListener("click", loadRecordings);
   window.reloadLibrary = loadRecordings;
   loadRecordings();

@@ -649,9 +649,10 @@
 
     <section class="app-view library-view" data-view="library" hidden>
         <div class="library-toolbar">
-            <p id="libraryStatus" class="library-status" role="status" aria-live="polite">Loading recordings…</p>
+            <nav id="libraryBreadcrumb" class="library-breadcrumb" aria-label="Recording folders"></nav>
             <button id="refreshLibrary" type="button">Refresh</button>
         </div>
+        <p id="libraryStatus" class="library-status" role="status" aria-live="polite">Loading recordings…</p>
         <ul id="recordingList" class="recording-list" aria-live="polite"></ul>
     </section>
     </main>
